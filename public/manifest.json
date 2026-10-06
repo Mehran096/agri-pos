@@ -2,13 +2,10 @@
   "name": "Sona Fertilizer Shop - Sales & Stock",
   "short_name": "Sona Shop",
   "description": "Fertilizer shop management - Sales Point, Products, Stock alerts",
-  "id": "/login",
   "start_url": "/login",
-  "scope": "/",
   "display": "standalone",
   "background_color": "#ffffff",
   "theme_color": "#16a34a",
-  "orientation": "portrait",
   "icons": [
     {
       "src": "/icon-circle-180.png",
@@ -20,7 +17,7 @@
       "src": "/icon-circle-512.png",
       "sizes": "512x512",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "maskable"
     }
   ]
 }
