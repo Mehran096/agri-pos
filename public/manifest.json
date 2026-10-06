@@ -2,7 +2,7 @@
   "name": "Sona Fertilizer Shop - Sales & Stock",
   "short_name": "Sona Shop",
   "description": "Fertilizer shop management - Sales Point, Products, Stock alerts",
-  "id": "/",
+  "id": "/login",
   "start_url": "/login",
   "scope": "/",
   "display": "standalone",
