@@ -1,4 +1,4 @@
-import { Schema, model, models, Types } from "mongoose";
+import { Schema, model, models, Types, type Model } from "mongoose";
 
 export interface ISale {
   productId: Types.ObjectId;
@@ -7,6 +7,7 @@ export interface ISale {
   price: number;
   total: number;
   soldBy?: string;
+  userId: Types.ObjectId; // <- added for private data
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -19,13 +20,18 @@ const SaleSchema = new Schema<ISale>(
     price: { type: Number, required: true },
     total: { type: Number, required: true },
     soldBy: { type: String, default: "shop" },
+    // --- SECURITY FIX ---
+    userId: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
   },
   { timestamps: true }
 );
 
-// --- INDEXES FOR SEARCH & PAGINATION ---
-SaleSchema.index({ productName: "text" }); // fast text search for "Urea", "Weedicide"
-SaleSchema.index({ createdAt: -1 }); // for Today/Monthly/Yearly sorting
-SaleSchema.index({ productId: 1, createdAt: -1 }); // for product-wise history
+// --- INDEXES FOR SEARCH & PAGINATION + MULTI-USER ---
+SaleSchema.index({ productName: "text" });
+SaleSchema.index({ createdAt: -1 });
+SaleSchema.index({ productId: 1, createdAt: -1 });
+SaleSchema.index({ userId: 1, createdAt: -1 }); // fast per-user Today/Monthly
+SaleSchema.index({ userId: 1, productName: 1 }); // fast per-user search
 
-export default models.Sale || model<ISale>("Sale", SaleSchema);
+const Sale = (models.Sale as Model<ISale>) || model<ISale>("Sale", SaleSchema);
+export default Sale;

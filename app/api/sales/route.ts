@@ -2,6 +2,9 @@ import dbConnect from "@/lib/mongodb";
 import Product from "@/models/Product";
 import Sale from "@/models/Sale";
 import { NextRequest, NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
+import { authOptions } from "../auth/[...nextauth]/route";
+import { Types } from "mongoose";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -16,6 +19,7 @@ type SaleBody = {
 
 type DateRange = { $gte?: Date; $lte?: Date };
 type SaleQuery = {
+  userId: string;
   createdAt?: DateRange;
   productName?: { $regex: string; $options: string };
 };
@@ -47,6 +51,11 @@ function getDateRange(filter: string): { start: Date; end: Date } {
 
 export async function GET(req: NextRequest) {
   try {
+    const session = await getServerSession(authOptions);
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     await dbConnect();
     const searchParams = req.nextUrl.searchParams;
 
@@ -57,7 +66,7 @@ export async function GET(req: NextRequest) {
     const skip = (page - 1) * limit;
 
     const { start, end } = getDateRange(filter);
-    const query: SaleQuery = {};
+    const query: SaleQuery = { userId: session.user.id };
 
     if (filter !== "all") {
       if (filter === "yesterday") {
@@ -71,11 +80,17 @@ export async function GET(req: NextRequest) {
       query.productName = { $regex: search, $options: "i" };
     }
 
+    const matchStage: Record<string, unknown> = {
+      userId: new Types.ObjectId(session.user.id),
+    };
+    if (query.createdAt) matchStage.createdAt = query.createdAt;
+    if (query.productName) matchStage.productName = query.productName;
+
     const [sales, totalCount, totalAgg] = await Promise.all([
       Sale.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
       Sale.countDocuments(query),
       Sale.aggregate([
-        { $match: query },
+        { $match: matchStage },
         { $group: { _id: null, total: { $sum: "$total" } } },
       ]),
     ]);
@@ -104,6 +119,11 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
+    const session = await getServerSession(authOptions);
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     await dbConnect();
     const body: SaleBody = await req.json();
 
@@ -115,7 +135,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Quantity must be > 0" }, { status: 400 });
     }
 
-    const product = await Product.findById(body.productId);
+    const product = await Product.findOne({ _id: body.productId, userId: session.user.id });
     if (!product) {
       return NextResponse.json({ error: "Product not found" }, { status: 404 });
     }
@@ -130,11 +150,13 @@ export async function POST(req: NextRequest) {
       price: Number(body.price),
       total: Number(body.quantity) * Number(body.price),
       soldBy: body.soldBy?.trim() || "shop",
+      userId: session.user.id,
     });
 
-    await Product.findByIdAndUpdate(body.productId, {
-      $inc: { stock: -body.quantity },
-    });
+    await Product.findOneAndUpdate(
+      { _id: body.productId, userId: session.user.id },
+      { $inc: { stock: -body.quantity } }
+    );
 
     return NextResponse.json(sale, { status: 201 });
   } catch (error) {

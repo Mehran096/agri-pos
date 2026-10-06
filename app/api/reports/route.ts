@@ -1,6 +1,9 @@
 import dbConnect from "@/lib/mongodb";
 import Sale from "@/models/Sale";
 import { NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/app/api//auth/[...nextauth]/route";
+import { Types } from "mongoose";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -15,7 +18,14 @@ function formatAgg(agg: AggResult[]): Summary {
 
 export async function GET() {
   try {
+    const session = await getServerSession(authOptions);
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     await dbConnect();
+
+    const userId = new Types.ObjectId(session.user.id);
 
     const now = new Date();
     const startToday = new Date();
@@ -29,18 +39,19 @@ export async function GET() {
 
     const [todayAgg, monthAgg, yearAgg, allAgg] = await Promise.all([
       Sale.aggregate<AggResult>([
-        { $match: { createdAt: { $gte: startToday } } },
+        { $match: { userId, createdAt: { $gte: startToday } } },
         { $group: { _id: null, count: { $sum: 1 }, total: { $sum: "$total" } } },
       ]),
       Sale.aggregate<AggResult>([
-        { $match: { createdAt: { $gte: startMonth } } },
+        { $match: { userId, createdAt: { $gte: startMonth } } },
         { $group: { _id: null, count: { $sum: 1 }, total: { $sum: "$total" } } },
       ]),
       Sale.aggregate<AggResult>([
-        { $match: { createdAt: { $gte: startYear } } },
+        { $match: { userId, createdAt: { $gte: startYear } } },
         { $group: { _id: null, count: { $sum: 1 }, total: { $sum: "$total" } } },
       ]),
       Sale.aggregate<AggResult>([
+        { $match: { userId } },
         { $group: { _id: null, count: { $sum: 1 }, total: { $sum: "$total" } } },
       ]),
     ]);

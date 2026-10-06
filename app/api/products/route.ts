@@ -1,6 +1,8 @@
 import dbConnect from "@/lib/mongodb";
 import Product from "@/models/Product";
 import { NextRequest, NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
+import { authOptions } from "./../auth/[...nextauth]/route";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -14,10 +16,16 @@ type ProductBody = {
 
 type ProductQuery = {
   name?: { $regex: string; $options: string };
+  userId?: string;
 };
 
 export async function GET(req: NextRequest) {
   try {
+    const session = await getServerSession(authOptions);
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     await dbConnect();
     const searchParams = req.nextUrl.searchParams;
 
@@ -26,7 +34,8 @@ export async function GET(req: NextRequest) {
     const limit = Math.min(100, Math.max(1, parseInt(searchParams.get("limit") || "50", 10)));
     const skip = (page - 1) * limit;
 
-    const query: ProductQuery = {};
+    // SECURITY: Always filter by userId
+    const query: ProductQuery = { userId: session.user.id };
     if (search) {
       query.name = { $regex: search, $options: "i" };
     }
@@ -36,7 +45,6 @@ export async function GET(req: NextRequest) {
       Product.countDocuments(query),
     ]);
 
-    // Paginated response for dashboard with search
     if (searchParams.has("page") || searchParams.has("search")) {
       return NextResponse.json({
         products,
@@ -50,7 +58,6 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    // Default array for SalesPoint page
     return NextResponse.json(products);
   } catch (error) {
     console.error("GET /api/products error:", error);
@@ -60,6 +67,11 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
+    const session = await getServerSession(authOptions);
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     await dbConnect();
     const body: ProductBody = await req.json();
 
@@ -72,6 +84,7 @@ export async function POST(req: NextRequest) {
       price: Number(body.price),
       unit: body.unit.trim(),
       stock: body.stock ?? 100,
+      userId: session.user.id, // <- attach owner
     });
 
     return NextResponse.json(product, { status: 201 });
