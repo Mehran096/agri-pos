@@ -3,10 +3,9 @@
   "short_name": "Sona Shop",
   "description": "Fertilizer shop management - Sales Point, Products, Stock alerts",
   "id": "/",
-  "start_url": "/?source=pwa",
+  "start_url": "/login",
   "scope": "/",
   "display": "standalone",
-  "display_override": ["window-controls-overlay", "standalone"],
   "background_color": "#ffffff",
   "theme_color": "#16a34a",
   "orientation": "portrait",
@@ -19,21 +18,9 @@
     },
     {
       "src": "/icon-circle-512.png",
-      "sizes": "192x192",
-      "type": "image/png",
-      "purpose": "any"
-    },
-    {
-      "src": "/icon-circle-512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any maskable"
-    },
-    {
-      "src": "/icon.png",
-      "sizes": "512x512",
-      "type": "image/png",
-      "purpose": "any"
     }
   ]
 }
