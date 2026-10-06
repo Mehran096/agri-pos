@@ -9,6 +9,7 @@
 !.yarn/plugins
 !.yarn/releases
 !.yarn/versions
+.pnp.*
 
 # testing
 /coverage
@@ -16,13 +17,16 @@
 # next.js
 /.next/
 /out/
+/build
 
 # production
 /build
+/dist
 
 # misc
 .DS_Store
 *.pem
+*.log
 
 # debug
 npm-debug.log*
@@ -30,8 +34,14 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
-.env*
+# env files - IMPORTANT FOR VERCEL
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+# Keep example file for others
+!.env.example
 
 # vercel
 .vercel
@@ -39,3 +49,12 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# PWA
+# Don't ignore public/sw.js and public/manifest.json - needed for PWA install
