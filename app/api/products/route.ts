@@ -2,7 +2,8 @@ import dbConnect from "@/lib/mongodb";
 import Product from "@/models/Product";
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
-import { authOptions } from "./../auth/[...nextauth]/route";
+import { authOptions } from "../auth/[...nextauth]/route";
+import { Types } from "mongoose";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -11,12 +12,13 @@ type ProductBody = {
   name: string; 
   price: number; 
   unit: string; 
-  stock?: number 
+  stock?: number;
+  localId?: string;
 };
 
 type ProductQuery = {
   name?: { $regex: string; $options: string };
-  userId?: string;
+  userId: Types.ObjectId;
 };
 
 export async function GET(req: NextRequest) {
@@ -28,14 +30,13 @@ export async function GET(req: NextRequest) {
 
     await dbConnect();
     const searchParams = req.nextUrl.searchParams;
-
     const search = searchParams.get("search")?.trim() || "";
     const page = Math.max(1, parseInt(searchParams.get("page") || "1", 10));
     const limit = Math.min(100, Math.max(1, parseInt(searchParams.get("limit") || "50", 10)));
     const skip = (page - 1) * limit;
 
-    // SECURITY: Always filter by userId
-    const query: ProductQuery = { userId: session.user.id };
+    const userObjectId = new Types.ObjectId(session.user.id);
+    const query: ProductQuery = { userId: userObjectId };
     if (search) {
       query.name = { $regex: search, $options: "i" };
     }
@@ -79,12 +80,27 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "name, price, unit required" }, { status: 400 });
     }
 
+    const userObjectId = new Types.ObjectId(session.user.id);
+
+    if (body.localId) {
+      const existing = await Product.findOne({ 
+        localId: body.localId, 
+        userId: userObjectId 
+      }).lean();
+      if (existing) {
+        return NextResponse.json(existing, { status: 200 });
+      }
+    }
+
     const product = await Product.create({
       name: body.name.trim(),
       price: Number(body.price),
       unit: body.unit.trim(),
       stock: body.stock ?? 100,
-      userId: session.user.id, // <- attach owner
+      userId: userObjectId,
+      localId: body.localId || undefined,
+      synced: true,
+      lastSyncedAt: new Date(),
     });
 
     return NextResponse.json(product, { status: 201 });

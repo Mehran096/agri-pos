@@ -11,15 +11,19 @@ export const runtime = "nodejs";
 
 type SaleBody = {
   productId: string;
-  productName: string;
+  productName?: string;
   quantity: number;
   price: number;
   soldBy?: string;
+  localId?: string;
+  customerName?: string;
+  paymentType?: string;
+  offlineCreatedAt?: string;
 };
 
 type DateRange = { $gte?: Date; $lte?: Date };
 type SaleQuery = {
-  userId: string;
+  userId: Types.ObjectId;
   createdAt?: DateRange;
   productName?: { $regex: string; $options: string };
 };
@@ -58,49 +62,38 @@ export async function GET(req: NextRequest) {
 
     await dbConnect();
     const searchParams = req.nextUrl.searchParams;
-
     const filter = searchParams.get("filter") || "all";
     const search = searchParams.get("search")?.trim() || "";
     const page = Math.max(1, parseInt(searchParams.get("page") || "1", 10));
     const limit = Math.min(100, Math.max(1, parseInt(searchParams.get("limit") || "20", 10)));
     const skip = (page - 1) * limit;
 
+    const userObjectId = new Types.ObjectId(session.user.id);
     const { start, end } = getDateRange(filter);
-    const query: SaleQuery = { userId: session.user.id };
+    const query: SaleQuery = { userId: userObjectId };
 
     if (filter !== "all") {
-      if (filter === "yesterday") {
-        query.createdAt = { $gte: start, $lte: end };
-      } else {
-        query.createdAt = { $gte: start };
-      }
+      query.createdAt = filter === "yesterday" ? { $gte: start, $lte: end } : { $gte: start };
     }
-
     if (search) {
       query.productName = { $regex: search, $options: "i" };
     }
 
-    const matchStage: Record<string, unknown> = {
-      userId: new Types.ObjectId(session.user.id),
-    };
+    const matchStage: Record<string, unknown> = { userId: userObjectId };
     if (query.createdAt) matchStage.createdAt = query.createdAt;
     if (query.productName) matchStage.productName = query.productName;
 
     const [sales, totalCount, totalAgg] = await Promise.all([
       Sale.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
       Sale.countDocuments(query),
-      Sale.aggregate([
-        { $match: matchStage },
-        { $group: { _id: null, total: { $sum: "$total" } } },
-      ]),
+      Sale.aggregate([{ $match: matchStage }, { $group: { _id: null, total: { $sum: "$total" } } }]),
     ]);
 
     const totalResult = totalAgg[0] as { total: number } | undefined;
-    const total = totalResult?.total ?? 0;
 
     return NextResponse.json({
       sales,
-      total,
+      total: totalResult?.total ?? 0,
       filter,
       count: totalCount,
       pagination: {
@@ -130,32 +123,53 @@ export async function POST(req: NextRequest) {
     if (!body.productId || !body.quantity || !body.price) {
       return NextResponse.json({ error: "productId, quantity, price required" }, { status: 400 });
     }
-
     if (body.quantity <= 0) {
       return NextResponse.json({ error: "Quantity must be > 0" }, { status: 400 });
     }
 
-    const product = await Product.findOne({ _id: body.productId, userId: session.user.id });
+    const userObjectId = new Types.ObjectId(session.user.id);
+
+    // OFFLINE IDEMPOTENCY - prevent double sale
+    if (body.localId) {
+      const existing = await Sale.findOne({ localId: body.localId, userId: userObjectId }).lean();
+      if (existing) {
+        return NextResponse.json(existing, { status: 200 });
+      }
+    }
+
+    if (!Types.ObjectId.isValid(body.productId)) {
+      return NextResponse.json({ error: "Invalid productId" }, { status: 400 });
+    }
+
+    const product = await Product.findOne({ _id: body.productId, userId: userObjectId });
     if (!product) {
       return NextResponse.json({ error: "Product not found" }, { status: 404 });
     }
-    if (product.stock < body.quantity) {
+
+    // For offline sales, stock check is soft (stock may be outdated)
+    if (!body.localId && product.stock < body.quantity) {
       return NextResponse.json({ error: `Only ${product.stock} left in stock` }, { status: 400 });
     }
 
     const sale = await Sale.create({
-      productId: body.productId,
-      productName: body.productName || product.name,
+      productId: new Types.ObjectId(body.productId),
+      productName: body.productName?.trim() || product.name,
       quantity: Number(body.quantity),
       price: Number(body.price),
       total: Number(body.quantity) * Number(body.price),
       soldBy: body.soldBy?.trim() || "shop",
-      userId: session.user.id,
+      userId: userObjectId,
+      localId: body.localId || `online_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
+      customerName: body.customerName || "Walk-in",
+      paymentType: body.paymentType || "cash",
+      synced: true,
+      offlineCreatedAt: body.offlineCreatedAt ? new Date(body.offlineCreatedAt) : new Date(),
     });
 
+    // Deduct stock (allow negative for offline case, will reconcile later)
     await Product.findOneAndUpdate(
-      { _id: body.productId, userId: session.user.id },
-      { $inc: { stock: -body.quantity } }
+      { _id: body.productId, userId: userObjectId },
+      { $inc: { stock: -body.quantity }, $set: { lastSyncedAt: new Date() } }
     );
 
     return NextResponse.json(sale, { status: 201 });

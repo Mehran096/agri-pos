@@ -1,36 +1,66 @@
 "use client";
 import { useEffect } from "react";
 
+const CURRENT_CACHE = "sona-shop-v5-offline";
+
 export default function SWRegister() {
+ 
   useEffect(() => {
-    if (!("serviceWorker" in navigator)) return;
+    if (typeof window === "undefined" ||!("serviceWorker" in navigator)) return;
 
-    // 1. Delete old crashing caches (agri-pwa-v1, sona-shop-v3, etc) - ONE TIME FIX
-    caches.keys().then((keys) => {
-      keys.forEach((k) => {
-        if (k.includes("agri-pwa") || k.includes("sona-shop-v")) {
-          // Keep only v4
-          if (k !== "sona-shop-v4-offline") {
-            caches.delete(k);
-          }
-        }
-      });
-    });
+    // 1. ONE TIME FIX: Delete ALL old caches except current v5
+    const cleanOldCaches = async () => {
+      try {
+        const keys = await caches.keys();
+        await Promise.all(
+          keys
+            .filter((k) => k!== CURRENT_CACHE && (k.includes("agri-pwa") || k.includes("sona-shop-")))
+            .map((k) => caches.delete(k))
+        );
+      } catch {
+        // ignore
+      }
+    };
+    void cleanOldCaches();
 
-    // 2. Unregister any old SW that is not v4 (fixes 2019 phone stuck SW)
-    navigator.serviceWorker.getRegistrations().then((regs) => {
-      regs.forEach((reg) => {
-        // If old SW still active, update it
-        reg.update().catch(()=>{});
-      });
-    });
+    // 2. Register after load - prevents render blocking
+    const onLoad = () => {
+      navigator.serviceWorker
+        .register("/sw.js", { scope: "/" })
+        .then((reg) => {
+          console.log("SW v5 registered:", reg.scope);
 
-    // 3. Register v4 safe offline SW after page load - no reload loop
-    window.addEventListener("load", () => {
-      navigator.serviceWorker.register("/sw.js").then((reg) => {
-        console.log("SW v4 registered:", reg.scope);
-      }).catch(() => {});
-    });
+          // 3. Auto-update when new SW found
+          reg.addEventListener("updatefound", () => {
+            const newWorker = reg.installing;
+            if (!newWorker) return;
+            newWorker.addEventListener("statechange", () => {
+              if (newWorker.state === "installed" && navigator.serviceWorker.controller) {
+                console.log("New SW installed, will activate on next reload");
+              }
+            });
+          });
+
+          // 4. Force update check every hour (shop stays open long)
+          window.setInterval(() => {
+            void reg.update().catch(() => {});
+          }, 60 * 60 * 1000);
+        })
+        .catch((err) => {
+          console.error("SW register failed:", err);
+        });
+    };
+
+    if (document.readyState === "complete") {
+      onLoad();
+    } else {
+      window.addEventListener("load", onLoad);
+    }
+
+    return () => {
+      window.removeEventListener("load", onLoad);
+    };
   }, []);
+
   return null;
 }

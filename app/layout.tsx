@@ -6,25 +6,30 @@ import SWRegister from "./sw-register";
 const geistSans = Geist({
   variable: "--font-geist-sans",
   subsets: ["latin"],
+  display: "swap",
 });
 
 const geistMono = Geist_Mono({
   variable: "--font-geist-mono",
   subsets: ["latin"],
+  display: "swap",
 });
 
 export const metadata: Metadata = {
   title: "🌾 Sona Fertilizer Shop - Sales & Stock",
-  description: "Fertilizer shop management - Sales Point, Products, Stock alerts, Reports. Fast mobile billing for agri shop.",
+  description: "Fertilizer shop management - Sales Point, Products, Stock alerts, Reports. Fast mobile billing for agri shop. Offline-ready PWA.",
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
-    title: "Fertilizer Shop",
+    title: "Sona Shop",
   },
   icons: {
-    icon: "/icon.png",
-    apple: "/icon-circle-180.png",
+    icon: [
+      { url: "/icon-circle-180.png", sizes: "180x180", type: "image/png" },
+      { url: "/icon-circle-512.png", sizes: "512x512", type: "image/png" },
+    ],
+    apple: [{ url: "/icon-circle-180.png", sizes: "180x180", type: "image/png" }],
   },
 };
 
@@ -33,6 +38,7 @@ export const viewport: Viewport = {
   initialScale: 1,
   maximumScale: 1,
   themeColor: "#16a34a",
+  colorScheme: "light",
 };
 
 export default function RootLayout({

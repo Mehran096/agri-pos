@@ -1,11 +1,17 @@
 {
+  "id": "/",
   "name": "Sona Fertilizer Shop - Sales & Stock",
   "short_name": "Sona Shop",
-  "description": "Fertilizer shop management - Sales Point, Products, Stock alerts",
+  "description": "Fertilizer shop management - Sales Point, Products, Stock alerts, Offline-ready",
   "start_url": "/login",
+  "scope": "/",
   "display": "standalone",
+  "display_override": ["standalone", "window-controls-overlay"],
+  "orientation": "portrait-primary",
   "background_color": "#ffffff",
   "theme_color": "#16a34a",
+  "categories": ["business", "productivity"],
+  "lang": "en",
   "icons": [
     {
       "src": "/icon-circle-180.png",
@@ -17,7 +23,36 @@
       "src": "/icon-circle-512.png",
       "sizes": "512x512",
       "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-circle-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
       "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Sales Point",
+      "short_name": "Sales",
+      "description": "Make a new sale",
+      "url": "/dashboard/sales",
+      "icons": [{ "src": "/icon-circle-180.png", "sizes": "180x180" }]
+    },
+    {
+      "name": "Products",
+      "short_name": "Products",
+      "description": "Manage products",
+      "url": "/dashboard/products",
+      "icons": [{ "src": "/icon-circle-180.png", "sizes": "180x180" }]
+    },
+    {
+      "name": "Sales History",
+      "short_name": "History",
+      "description": "View sales history",
+      "url": "/dashboard/sales/history",
+      "icons": [{ "src": "/icon-circle-180.png", "sizes": "180x180" }]
     }
   ]
 }

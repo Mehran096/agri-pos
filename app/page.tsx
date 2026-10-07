@@ -1,34 +1,45 @@
-/* eslint-disable react-hooks/set-state-in-effect */
 "use client";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback, useSyncExternalStore } from "react";
 
 interface BeforeInstallPromptEvent extends Event {
   prompt: () => Promise<void>;
   userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
 }
 
+function useIsStandalone(): boolean {
+  const subscribe = useCallback((cb: () => void) => {
+    const mql = window.matchMedia("(display-mode: standalone)");
+    mql.addEventListener("change", cb);
+    return () => mql.removeEventListener("change", cb);
+  }, []);
+  const getSnapshot = useCallback(() => window.matchMedia("(display-mode: standalone)").matches, []);
+  const getServerSnapshot = useCallback(() => false, []);
+  return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+}
+
 export default function HomePage() {
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+  const isStandalone = useIsStandalone();
   const [isInstalled, setIsInstalled] = useState(false);
 
   useEffect(() => {
-    if (window.matchMedia("(display-mode: standalone)").matches) {
-      setIsInstalled(true);
-    }
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setIsInstalled(isStandalone);
+  }, [isStandalone]);
 
+  useEffect(() => {
     const handler = (e: Event) => {
       e.preventDefault();
       setDeferredPrompt(e as BeforeInstallPromptEvent);
     };
-
     window.addEventListener("beforeinstallprompt", handler);
     return () => window.removeEventListener("beforeinstallprompt", handler);
   }, []);
 
-  const handleInstall = async () => {
+  const handleInstall = useCallback(async () => {
     if (!deferredPrompt) {
-      alert("Chrome Menu ⋮ → Add to Home screen / Install app");
+      window.alert("Chrome Menu ⋮ → Add to Home screen / Install app");
       return;
     }
     await deferredPrompt.prompt();
@@ -37,7 +48,7 @@ export default function HomePage() {
       setDeferredPrompt(null);
       setIsInstalled(true);
     }
-  };
+  }, [deferredPrompt]);
 
   return (
     <div className="min-h-dvh bg-gray-50 flex flex-col">
@@ -45,17 +56,11 @@ export default function HomePage() {
         <h1 className="font-bold text-[14px] sm:text-[16px]">🌾 Fertilizer Shop</h1>
         <div className="flex gap-2">
           {!isInstalled && (
-            <button
-              onClick={handleInstall}
-              className="bg-green-600 text-white px-3.5 py-1.5 rounded-lg text-[11px] font-bold"
-            >
+            <button type="button" onClick={handleInstall} className="bg-green-600 text-white px-3.5 py-1.5 rounded-lg text-[11px] font-bold">
               📲 Install
             </button>
           )}
-          <Link
-            href="/dashboard"
-            className="bg-gray-900 text-white px-3.5 py-1.5 rounded-lg text-[11px] font-bold"
-          >
+          <Link href="/dashboard" className="bg-gray-900 text-white px-3.5 py-1.5 rounded-lg text-[11px] font-bold">
             Dashboard →
           </Link>
         </div>
@@ -68,9 +73,7 @@ export default function HomePage() {
             <br />
             Management System
           </h1>
-          <p className="text-gray-400 text-[12px] sm:text-[15px] mt-2">
-            Fast billing • Stock tracking • Sales reports
-          </p>
+          <p className="text-gray-400 text-[12px] sm:text-[15px] mt-2">Fast billing • Stock tracking • Sales reports</p>
 
           {!isInstalled && (
             <div className="mt-4 bg-green-600 text-white p-3 rounded-xl flex justify-between items-center text-left">
@@ -78,10 +81,7 @@ export default function HomePage() {
                 <p className="font-bold text-[12px]">📲 Install App</p>
                 <p className="text-[10px] text-green-100">Works offline</p>
               </div>
-              <button
-                onClick={handleInstall}
-                className="bg-white text-green-600 px-3.5 py-1.5 rounded-lg font-bold text-[11px] ml-2 shrink-0"
-              >
+              <button type="button" onClick={handleInstall} className="bg-white text-green-600 px-3.5 py-1.5 rounded-lg font-bold text-[11px] ml-2 shrink-0">
                 Install
               </button>
             </div>

@@ -2,7 +2,7 @@ import dbConnect from "@/lib/mongodb";
 import Sale from "@/models/Sale";
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
-import { authOptions } from "@/app/api//auth/[...nextauth]/route";
+import { authOptions } from "@/app/api/auth/[...nextauth]/route";
 import { Types } from "mongoose";
 
 export const dynamic = "force-dynamic";
@@ -24,11 +24,10 @@ export async function GET() {
     }
 
     await dbConnect();
-
     const userId = new Types.ObjectId(session.user.id);
 
     const now = new Date();
-    const startToday = new Date();
+    const startToday = new Date(now);
     startToday.setHours(0, 0, 0, 0);
 
     const startMonth = new Date(now.getFullYear(), now.getMonth(), 1);

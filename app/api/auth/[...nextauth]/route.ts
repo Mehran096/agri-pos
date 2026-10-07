@@ -1,4 +1,4 @@
-import NextAuth, { AuthOptions, DefaultSession } from "next-auth";
+import NextAuth, { AuthOptions } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
 import dbConnect from "@/lib/mongodb";
 import User from "@/models/User";
@@ -6,25 +6,6 @@ import bcrypt from "bcryptjs";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-
-declare module "next-auth" {
-  interface User {
-    role?: string;
-  }
-  interface Session {
-    user: {
-      id: string;
-      role?: string;
-    } & DefaultSession["user"];
-  }
-}
-
-declare module "next-auth/jwt" {
-  interface JWT {
-    id?: string;
-    role?: string;
-  }
-}
 
 export const authOptions: AuthOptions = {
   providers: [
@@ -35,17 +16,26 @@ export const authOptions: AuthOptions = {
         password: { label: "Password", type: "password" },
       },
       async authorize(credentials) {
-        if (!credentials?.email || !credentials?.password) return null;
+        if (!credentials?.email ||!credentials?.password) {
+          return null;
+        }
 
         await dbConnect();
-        const user = await User.findOne({ email: credentials.email }).lean();
+        const user = await User.findOne({ email: credentials.email }).lean() as unknown as {
+          _id: { toString: () => string };
+          email: string;
+          name: string;
+          role: string;
+          password: string;
+        } | null;
+
         if (!user) return null;
 
-        const isValid = await bcrypt.compare(
-          credentials.password,
-          user.password as string
-        );
+        const isValid = await bcrypt.compare(credentials.password, user.password);
         if (!isValid) return null;
+
+        // fire-and-forget, don't block login
+        void User.updateOne({ _id: user._id }, { $set: { lastLoginAt: new Date() } });
 
         return {
           id: user._id.toString(),
@@ -56,23 +46,26 @@ export const authOptions: AuthOptions = {
       },
     }),
   ],
-  callbacks: {
+    callbacks: {
     async jwt({ token, user }) {
       if (user) {
         token.id = user.id;
-        token.role = user.role;
+        token.role = (user as { role: string }).role;
       }
       return token;
     },
     async session({ session, token }) {
       if (session.user) {
-        session.user.id = token.id as string;
-        session.user.role = token.role as string;
+        session.user.id = token.id;
+        session.user.role = token.role;
       }
       return session;
     },
   },
-  session: { strategy: "jwt" },
+  session: {
+    strategy: "jwt",
+    maxAge: 7 * 24 * 60 * 60, // 7 days - shop stays logged in
+  },
   secret: process.env.NEXTAUTH_SECRET,
   pages: { signIn: "/login" },
 };
