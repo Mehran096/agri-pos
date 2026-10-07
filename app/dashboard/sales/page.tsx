@@ -56,9 +56,9 @@ export default function SalesPage() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
 
-  useEffect(() => { 
+  useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setMounted(true); 
+    setMounted(true);
   }, []);
 
   const refreshSalesOnly = useCallback(async () => {
@@ -160,8 +160,8 @@ export default function SalesPage() {
             const unsynced = cached.filter(c => c.synced === 0);
             await offlineDB.products.clear();
             await offlineDB.products.bulkAdd([
-           ...unsynced,
-           ...allList.map(p => ({ _id: p._id, localId: p._id, name: p.name, price: p.price, stock: p.stock, unit: p.unit, userId: "cached", synced: 1 as const }))
+          ...unsynced,
+          ...allList.map(p => ({ _id: p._id, localId: p._id, name: p.name, price: p.price, stock: p.stock, unit: p.unit, userId: "cached", synced: 1 as const }))
             ]);
           } catch {}
         }
@@ -290,10 +290,8 @@ export default function SalesPage() {
     } finally { setDeletingId(null); }
   };
 
-  // ✅ FIXED: + / - now updates stock online + offline always
   const handleUpdateQty = async (sale: Sale, newQty: number) => {
     if (newQty < 1) return;
-
     let currentStock = 0;
     const productInList = products.find(p => p._id === sale.productId);
     if (productInList) {
@@ -302,7 +300,6 @@ export default function SalesPage() {
       const cachedProd = await offlineDB.products.where("_id").equals(sale.productId).or("localId").equals(sale.productId).first();
       currentStock = cachedProd?.stock?? 0;
     }
-
     const maxAllowed = currentStock + sale.quantity;
     if (newQty > maxAllowed) {
       window.alert(`Only ${maxAllowed} total available. Shop: ${currentStock} left.`);
@@ -310,7 +307,6 @@ export default function SalesPage() {
     }
     const delta = newQty - sale.quantity;
     setUpdatingId(sale._id);
-
     try {
       if (sale._id.startsWith("local_")) {
         await offlineDB.sales.update(sale._id, { quantity: newQty, total: newQty * sale.price });
@@ -319,7 +315,6 @@ export default function SalesPage() {
         await refreshSalesOnly();
         return;
       }
-
       const res = await fetch(`/api/sales/${sale._id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -367,9 +362,36 @@ export default function SalesPage() {
                 <div key={p._id} className="bg-white border rounded-xl p-3 shadow-sm flex flex-col">
                   <div className="flex justify-between"><p className="font-semibold text-[13px]">{p.name}</p><span className={`text-[10px] px-2 py-0.5 rounded-full ${outOfStock? "bg-red-100 text-red-600" : stock < 20? "bg-amber-100 text-amber-600" : "bg-green-100 text-green-600"}`}>{outOfStock? "0 left" : `${stock} left`}</span></div>
                   <p className="text-[11px] text-gray-500 mt-1">Rs. {p.price}/{p.unit}</p>
-                  <div className="flex gap-2 mt-2.5">
-                    <input type="number" min={1} max={Math.max(1, stock)} value={qty} onChange={(e) => setQtyMap({...qtyMap, [p._id]: Math.max(1, Number(e.target.value)) })} disabled={outOfStock} className="border rounded-lg w-20 p-1.5 text-center text-[12px] disabled:bg-gray-100" />
-                    <button onClick={() => sell(p)} disabled={outOfStock || notEnough} className={`flex-1 rounded-lg font-medium text-[12px] py-2 transition ${outOfStock || notEnough? "bg-gray-200 text-gray-500 cursor-not-allowed" : "bg-green-600 hover:bg-green-700 text-white"}`}>{outOfStock? "Out of Stock" : notEnough? `Only ${stock} left` : "Sell"}</button>
+                  {/* ✅ MOBILE FIXED INPUT */}
+                  <div className="flex gap-2 mt-2.5 items-center">
+                    <div className="flex items-center border rounded-lg bg-white overflow-hidden shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => setQtyMap({...qtyMap, [p._id]: Math.max(1, (qtyMap[p._id] || 1) - 1)})}
+                        disabled={outOfStock}
+                        className="px-3.5 py-2 text-[15px] font-bold bg-gray-50 active:bg-gray-200 disabled:opacity-40"
+                      >-</button>
+                      <input
+                        type="tel"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
+                        value={qty}
+                        disabled={outOfStock}
+                        onChange={(e) => {
+                          const v = e.target.value.replace(/[^0-9]/g, "");
+                          const num = v === ""? 1 : Math.max(1, Math.min(stock, Number(v)));
+                          setQtyMap({...qtyMap, [p._id]: num});
+                        }}
+                        className="w-12 text-center p-2 text-[13px] border-x outline-none bg-white disabled:bg-gray-100"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setQtyMap({...qtyMap, [p._id]: Math.min(stock || 1, (qtyMap[p._id] || 1) + 1)})}
+                        disabled={outOfStock}
+                        className="px-3.5 py-2 text-[15px] font-bold bg-gray-50 active:bg-gray-200 disabled:opacity-40"
+                      >+</button>
+                    </div>
+                    <button onClick={() => sell(p)} disabled={outOfStock || notEnough} className={`flex-1 rounded-lg font-medium text-[12px] py-2.5 transition ${outOfStock || notEnough? "bg-gray-200 text-gray-500 cursor-not-allowed" : "bg-green-600 hover:bg-green-700 active:bg-green-800 text-white"}`}>{outOfStock? "Out of Stock" : notEnough? `Only ${stock} left` : "Sell"}</button>
                   </div>
                 </div>
               );
@@ -402,9 +424,9 @@ export default function SalesPage() {
                   <div className="flex justify-between"><p className="font-medium text-[12px]">{s.productName} <span className="text-gray-400 text-[11px]">x{s.quantity}</span> {s._id.startsWith("local_") && <span className="ml-1 text-[9px] bg-amber-200 px-1.5 py-0.5 rounded-full">OFFLINE</span>}</p><span className="font-bold text-[12px]">Rs. {s.total}</span></div>
                   <p className="text-[10px] text-gray-400" suppressHydrationWarning>{mounted? `${new Date(s.createdAt).toLocaleDateString()} • ${new Date(s.createdAt).toLocaleTimeString()}` : ""}</p>
                   <div className="flex items-center gap-1.5 mt-1">
-                    <button onClick={() => handleUpdateQty(s, s.quantity - 1)} disabled={!canDec || isUpdating || isDeleting} className={`px-2.5 py-1 rounded-lg text-[11px] ${!canDec || isUpdating? "bg-gray-50 text-gray-300 cursor-not-allowed" : "bg-gray-100 hover:bg-gray-200"}`}>{isUpdating? "..." : "-"}</button>
-                    <span className="text-[11px] px-1 min-w-4.5 text-center">{s.quantity}</span>
-                    <button onClick={() => handleUpdateQty(s, s.quantity + 1)} disabled={!canInc || isUpdating || isDeleting} className={`px-2.5 py-1 rounded-lg text-[11px] ${!canInc || isUpdating? "bg-gray-50 text-gray-300 cursor-not-allowed" : "bg-gray-100 hover:bg-gray-200"}`}>{isUpdating? "..." : "+"}</button>
+                    <button onClick={() => handleUpdateQty(s, s.quantity - 1)} disabled={!canDec || isUpdating || isDeleting} className={`px-3 py-1.5 rounded-lg text-[13px] font-bold ${!canDec || isUpdating? "bg-gray-50 text-gray-300" : "bg-gray-100 active:bg-gray-200"}`}>-</button>
+                    <span className="text-[11px] px-2 min-w-6 text-center">{s.quantity}</span>
+                    <button onClick={() => handleUpdateQty(s, s.quantity + 1)} disabled={!canInc || isUpdating || isDeleting} className={`px-3 py-1.5 rounded-lg text-[13px] font-bold ${!canInc || isUpdating? "bg-gray-50 text-gray-300" : "bg-gray-100 active:bg-gray-200"}`}>+</button>
                     {prod && <span className="ml-2 text-[10px] text-gray-400">{prod.stock} left • max {available}</span>}
                     <button onClick={() => handleDeleteSale(s._id)} disabled={isDeleting || isUpdating} className={`ml-auto text-[11px] px-2.5 py-1 rounded-lg ${isDeleting? "bg-gray-200 text-gray-400" : "text-red-500 bg-red-50 hover:bg-red-100"}`}>{isDeleting? "Deleting..." : "Delete"}</button>
                   </div>

@@ -295,7 +295,7 @@ export default function ProductsPage() {
           <input placeholder="Name" value={form.name} onChange={(e) => setForm({...form, name: e.target.value })} className="border border-gray-200 p-2 sm:p-2.5 rounded-lg col-span-2 text-[13px] sm:text-[14px] focus:ring-2 focus:ring-green-500 outline-none" required />
           <input placeholder="Price" type="number" value={form.price} onChange={(e) => setForm({...form, price: e.target.value })} className="border border-gray-200 p-2 sm:p-2.5 rounded-lg text-[13px] sm:text-[14px] focus:ring-2 focus:ring-green-500 outline-none" required />
           <select value={form.unit} onChange={(e) => setForm({...form, unit: e.target.value })} className="border border-gray-200 p-2 sm:p-2.5 rounded-lg bg-white text-[13px] sm:text-[14px]">
-            <option value="bag">bag</option><option value="liter">liter</option><option value="kg">kg</option>
+            <option value="bag">bag</option><option value="liter">liter</option><option value="kg">kg</option><option value="ml">ml</option>
           </select>
           <input placeholder="Stock" type="number" value={form.stock} onChange={(e) => setForm({...form, stock: e.target.value })} className="border border-gray-200 p-2 sm:p-2.5 rounded-lg text-[13px] sm:text-[14px] focus:ring-2 focus:ring-green-500 outline-none col-span-2 sm:col-span-1" />
         </div>
