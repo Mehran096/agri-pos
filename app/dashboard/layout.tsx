@@ -23,9 +23,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [hasMounted, setHasMounted] = useState(false);
   const isOnline = useIsOnline();
 
-  useEffect(() => {
+  useEffect(() => { 
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setHasMounted(true);
+    setHasMounted(true); 
   }, []);
 
   useEffect(() => {
@@ -57,7 +57,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   return (
     <div className="min-h-dvh flex bg-gray-50">
-      <div className="md:hidden fixed top-0 left-0 right-0 bg-green-800 text-white p-3.5 flex justify-between items-center z-30 h-14">
+      <div className="md:hidden fixed top-0 left-0 right-0 bg-green-800 text-white p-3.5 flex justify-between items-center z-30 h-14 pt-[env(safe-area-inset-top)]">
         <h2 className="font-bold text-[13px] flex items-center gap-2" suppressHydrationWarning>
           🌾 Agri PWA
           {hasMounted && isOffline && <span className="text-[9px] bg-amber-500 px-1.5 py-0.5 rounded-full">OFFLINE</span>}
@@ -68,8 +68,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         </button>
       </div>
 
-      <aside className={`w-64 bg-green-800 text-white p-5 flex flex-col z-20 fixed md:sticky top-0 left-0 h-dvh md:h-screen shrink-0 transition-transform duration-300 ${open? "translate-x-0" : "-translate-x-full md:translate-x-0"}`}>
-        <h2 className="font-bold text-[16px] mb-6 hidden md:flex items-center gap-2" suppressHydrationWarning>
+      <aside className={`w-64 bg-green-800 text-white p-5 flex flex-col z-40 fixed md:sticky top-0 left-0 h-dvh md:h-screen shrink-0 transition-transform duration-300 overflow-y-auto ${open? "translate-x-0" : "-translate-x-full md:translate-x-0"}`}>
+        {/* ✅ FIX: Add top padding for mobile notch + header */}
+        <div className="md:hidden h-14 shrink-0" />
+
+        <h2 className="font-bold text-[16px] mb-6 flex items-center gap-2" suppressHydrationWarning>
           🌾 Agri PWA
           {hasMounted && isOffline && <span className="text-[9px] bg-amber-500 px-1.5 py-0.5 rounded-full">OFFLINE</span>}
         </h2>
@@ -80,14 +83,14 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </div>
         )}
 
-        <nav className="flex flex-col gap-1 flex-1 mt-2 md:mt-0">
+        <nav className="flex flex-col gap-1 flex-1">
           <Link href="/dashboard" onClick={closeMenu} className="hover:bg-green-700 p-2.5 rounded-lg transition text-[13px]">📊 Dashboard</Link>
           <Link href="/dashboard/products" onClick={closeMenu} className="hover:bg-green-700 p-2.5 rounded-lg transition text-[13px]">📦 Products</Link>
           <Link href="/dashboard/sales" onClick={closeMenu} className="hover:bg-green-700 p-2.5 rounded-lg transition text-[13px]">💰 Sales Point</Link>
           <Link href="/dashboard/sales/history" onClick={closeMenu} className="hover:bg-green-700 p-2.5 rounded-lg transition text-[13px]">📜 Sales History</Link>
         </nav>
 
-        <div className="mt-auto flex flex-col gap-2" suppressHydrationWarning>
+        <div className="mt-auto flex flex-col gap-2 pt-6" suppressHydrationWarning>
           <div className="text-[10px] text-green-200/60 text-center">
             {hasMounted? (isOnline? "🟢 Online" : "🟡 Offline Mode") : "🟢 Online"}
           </div>
@@ -97,7 +100,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         </div>
       </aside>
 
-      {open && <button type="button" aria-label="Close menu" onClick={closeMenu} className="fixed inset-0 bg-black/50 z-10 md:hidden" />}
+      {open && <button type="button" aria-label="Close menu" onClick={closeMenu} className="fixed inset-0 bg-black/50 z-30 md:hidden" />}
 
       <main className="flex-1 min-w-0 min-h-dvh bg-gray-50 pt-14 md:pt-0">
         <div className="p-3 sm:p-5 w-full max-w-7xl mx-auto">{children}</div>
