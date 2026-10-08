@@ -3,8 +3,21 @@ import { useEffect, useState, useCallback, useSyncExternalStore } from "react";
 import { offlineDB, OfflineProduct } from "@/lib/offline-db";
 import { getOfflineUser } from "@/lib/offline-auth";
 
-type Product = { _id: string; name: string; price: number; unit: string; stock?: number; localId?: string; synced?: number };
-type FormState = { name: string; price: string; unit: string; stock: string };
+type Product = {
+  _id: string;
+  name: string;
+  price: number;
+  buyPrice: number;
+  sellPrice: number;
+  profit?: number;
+  profitPercent?: number;
+  unit: string;
+  stock?: number;
+  localId?: string;
+  synced?: number;
+};
+
+type FormState = { name: string; buyPrice: string; sellPrice: string; unit: string; stock: string };
 type Pagination = { page: number; totalPages: number; hasMore: boolean; totalCount: number };
 type ProductsResponse = { products: Product[]; pagination: Pagination } | Product[];
 
@@ -34,7 +47,7 @@ export default function ProductsPage() {
   const isOffline =!isOnline;
 
   const [products, setProducts] = useState<Product[]>([]);
-  const [form, setForm] = useState<FormState>({ name: "", price: "", unit: "bag", stock: "100" });
+  const [form, setForm] = useState<FormState>({ name: "", buyPrice: "", sellPrice: "", unit: "bag", stock: "100" });
   const [editId, setEditId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
@@ -49,8 +62,18 @@ export default function ProductsPage() {
     if (typeof window!== "undefined" &&!window.navigator.onLine) {
       const cached = await offlineDB.products.toArray();
       const filtered = cached
-    .filter((c) =>!currentSearch || c.name.toLowerCase().includes(currentSearch.toLowerCase()))
-    .map((c) => ({ _id: c._id || c.localId, name: c.name, price: c.price, unit: c.unit, stock: c.stock, localId: c.localId, synced: c.synced }));
+       .filter((c) =>!currentSearch || c.name.toLowerCase().includes(currentSearch.toLowerCase()))
+       .map((c) => ({
+          _id: c._id || c.localId,
+          name: c.name,
+          price: c.price,
+          buyPrice: c.buyPrice || 0,
+          sellPrice: c.sellPrice || c.price,
+          unit: c.unit,
+          stock: c.stock,
+          localId: c.localId,
+          synced: c.synced,
+        }));
       setProducts(filtered);
       setPagination({ page: 1, totalPages: 1, hasMore: false, totalCount: filtered.length });
       return;
@@ -84,7 +107,15 @@ export default function ProductsPage() {
         const res = await fetch(url, {
           method,
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name: p.name, price: p.price, unit: p.unit, stock: p.stock, localId: p.localId }),
+          body: JSON.stringify({
+            name: p.name,
+            buyPrice: p.buyPrice?? Math.round(p.price * 0.75),
+            sellPrice: p.sellPrice?? p.price,
+            price: p.price,
+            unit: p.unit,
+            stock: p.stock,
+            localId: p.localId,
+          }),
         });
         if (res.ok) {
           await offlineDB.products.update(p.localId, { synced: 1 });
@@ -99,7 +130,6 @@ export default function ProductsPage() {
     if (synced > 0) void refreshAfterAction(search);
   }, [refreshAfterAction, search]);
 
- 
   useEffect(() => {
     const controller = new AbortController();
     const load = async (currentSearch: string, currentPage: number, signal: AbortSignal) => {
@@ -108,8 +138,18 @@ export default function ProductsPage() {
       try {
         const cached = await offlineDB.products.toArray();
         const offlineFiltered = cached
-      .filter((c) =>!currentSearch || c.name.toLowerCase().includes(currentSearch.toLowerCase()))
-      .map((c) => ({ _id: c._id || c.localId, name: c.name, price: c.price, unit: c.unit, stock: c.stock, localId: c.localId, synced: c.synced }));
+         .filter((c) =>!currentSearch || c.name.toLowerCase().includes(currentSearch.toLowerCase()))
+         .map((c) => ({
+            _id: c._id || c.localId,
+            name: c.name,
+            price: c.price,
+            buyPrice: c.buyPrice || Math.round(c.price * 0.75),
+            sellPrice: c.sellPrice || c.price,
+            unit: c.unit,
+            stock: c.stock,
+            localId: c.localId,
+            synced: c.synced,
+          }));
 
         const offlineUnsyncedCount = cached.filter((c) => c.synced === 0).length;
         setPendingCount(offlineUnsyncedCount);
@@ -135,7 +175,9 @@ export default function ProductsPage() {
             _id: p._id,
             localId: p._id,
             name: p.name,
-            price: p.price,
+            price: p.sellPrice || p.price,
+            buyPrice: p.buyPrice || Math.round((p.sellPrice || p.price) * 0.75),
+            sellPrice: p.sellPrice || p.price,
             stock: p.stock?? 0,
             unit: p.unit,
             userId: "cached",
@@ -156,7 +198,9 @@ export default function ProductsPage() {
                 _id: p._id,
                 localId: p._id,
                 name: p.name,
-                price: p.price,
+                price: p.sellPrice || p.price,
+                buyPrice: p.buyPrice || Math.round((p.sellPrice || p.price) * 0.75),
+                sellPrice: p.sellPrice || p.price,
                 stock: p.stock?? 0,
                 unit: p.unit,
                 userId: "cached",
@@ -178,7 +222,7 @@ export default function ProductsPage() {
   }, [search, page]);
 
   useEffect(() => {
-     // eslint-disable-next-line react-hooks/set-state-in-effect
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (isOnline) void syncPendingProducts();
   }, [isOnline, syncPendingProducts]);
 
@@ -189,7 +233,21 @@ export default function ProductsPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const payload = { name: form.name, price: Number(form.price), unit: form.unit, stock: Number(form.stock) };
+    const buy = Number(form.buyPrice);
+    const sell = Number(form.sellPrice);
+    if (sell <= 0) {
+      alert("Sell price required");
+      return;
+    }
+
+    const payload = {
+      name: form.name,
+      buyPrice: buy,
+      sellPrice: sell,
+      price: sell,
+      unit: form.unit,
+      stock: Number(form.stock),
+    };
     const offlineUser = getOfflineUser();
 
     if (typeof window!== "undefined" &&!window.navigator.onLine) {
@@ -198,7 +256,9 @@ export default function ProductsPage() {
         _id: editId &&!editId.startsWith("local_")? editId : localId,
         localId,
         name: payload.name,
-        price: payload.price,
+        price: payload.sellPrice,
+        buyPrice: payload.buyPrice,
+        sellPrice: payload.sellPrice,
         stock: payload.stock,
         unit: payload.unit,
         userId: offlineUser?._id || "offline",
@@ -206,7 +266,7 @@ export default function ProductsPage() {
       };
       await offlineDB.products.put(offlineProd);
       setPendingCount((c) => c + 1);
-      setForm({ name: "", price: "", unit: "bag", stock: "100" });
+      setForm({ name: "", buyPrice: "", sellPrice: "", unit: "bag", stock: "100" });
       setEditId(null);
       await refreshAfterAction(search);
       return;
@@ -227,7 +287,9 @@ export default function ProductsPage() {
         _id: editId &&!editId.startsWith("local_")? editId : localId,
         localId,
         name: payload.name,
-        price: payload.price,
+        price: payload.sellPrice,
+        buyPrice: payload.buyPrice,
+        sellPrice: payload.sellPrice,
         stock: payload.stock,
         unit: payload.unit,
         userId: offlineUser?._id || "offline",
@@ -236,14 +298,20 @@ export default function ProductsPage() {
       await offlineDB.products.put(offlineProd);
       setPendingCount((c) => c + 1);
     }
-    setForm({ name: "", price: "", unit: "bag", stock: "100" });
+    setForm({ name: "", buyPrice: "", sellPrice: "", unit: "bag", stock: "100" });
     setEditId(null);
     await refreshAfterAction(search);
   };
 
   const handleEdit = (p: Product) => {
     setEditId(p._id);
-    setForm({ name: p.name, price: String(p.price), unit: p.unit, stock: String(p.stock?? 100) });
+    setForm({
+      name: p.name,
+      buyPrice: String(p.buyPrice || Math.round((p.sellPrice || p.price) * 0.75)),
+      sellPrice: String(p.sellPrice || p.price),
+      unit: p.unit,
+      stock: String(p.stock?? 100),
+    });
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
@@ -262,6 +330,8 @@ export default function ProductsPage() {
     }
     await refreshAfterAction(search);
   };
+
+  const liveProfit = form.buyPrice && form.sellPrice? Number(form.sellPrice) - Number(form.buyPrice) : 0;
 
   return (
     <div className="p-3 sm:p-6 md:p-8 max-w-6xl mx-auto min-h-screen bg-gray-50">
@@ -290,38 +360,69 @@ export default function ProductsPage() {
       </div>
 
       <form onSubmit={handleSubmit} className="bg-white p-3 sm:p-5 rounded-xl shadow-sm border border-gray-100 mb-4 sm:mb-6">
-        <p className="font-semibold mb-2 sm:mb-3 text-gray-700 text-[13px] sm:text-[15px]">{editId? "Edit Product" : "Add New Product"} {editId?.startsWith("local_") && <span className="ml-2 text-[9px] bg-amber-200 text-amber-800 px-1.5 py-0.5 rounded-full">OFFLINE</span>}</p>
-        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 sm:gap-3">
-          <input placeholder="Name" value={form.name} onChange={(e) => setForm({...form, name: e.target.value })} className="border border-gray-200 p-2 sm:p-2.5 rounded-lg col-span-2 text-[13px] sm:text-[14px] focus:ring-2 focus:ring-green-500 outline-none" required />
-          <input placeholder="Price" type="number" value={form.price} onChange={(e) => setForm({...form, price: e.target.value })} className="border border-gray-200 p-2 sm:p-2.5 rounded-lg text-[13px] sm:text-[14px] focus:ring-2 focus:ring-green-500 outline-none" required />
+        <p className="font-semibold mb-2 sm:mb-3 text-gray-700 text-[13px] sm:text-[15px]">
+          {editId? "Edit Product" : "Add New Product"} {editId?.startsWith("local_") && <span className="ml-2 text-[9px] bg-amber-200 text-amber-800 px-1.5 py-0.5 rounded-full">OFFLINE</span>}
+        </p>
+
+        <div className="grid grid-cols-2 sm:grid-cols-6 gap-2 sm:gap-3">
+          <input placeholder="Name e.g. Sona DAP" value={form.name} onChange={(e) => setForm({...form, name: e.target.value })} className="border border-gray-200 p-2 sm:p-2.5 rounded-lg col-span-2 text-[13px] sm:text-[14px] focus:ring-2 focus:ring-green-500 outline-none" required />
+          <input placeholder="Buy Rs." type="number" value={form.buyPrice} onChange={(e) => setForm({...form, buyPrice: e.target.value })} className="border border-gray-200 p-2 sm:p-2.5 rounded-lg text-[13px] sm:text-[14px] focus:ring-2 focus:ring-red-300 outline-none bg-red-50/50" required />
+          <input placeholder="Sell Rs." type="number" value={form.sellPrice} onChange={(e) => setForm({...form, sellPrice: e.target.value })} className="border border-gray-200 p-2 sm:p-2.5 rounded-lg text-[13px] sm:text-[14px] focus:ring-2 focus:ring-blue-300 outline-none bg-blue-50/50" required />
           <select value={form.unit} onChange={(e) => setForm({...form, unit: e.target.value })} className="border border-gray-200 p-2 sm:p-2.5 rounded-lg bg-white text-[13px] sm:text-[14px]">
             <option value="bag">bag</option><option value="liter">liter</option><option value="kg">kg</option><option value="ml">ml</option>
           </select>
-          <input placeholder="Stock" type="number" value={form.stock} onChange={(e) => setForm({...form, stock: e.target.value })} className="border border-gray-200 p-2 sm:p-2.5 rounded-lg text-[13px] sm:text-[14px] focus:ring-2 focus:ring-green-500 outline-none col-span-2 sm:col-span-1" />
+          <input placeholder="Stock" type="number" value={form.stock} onChange={(e) => setForm({...form, stock: e.target.value })} className="border border-gray-200 p-2 sm:p-2.5 rounded-lg text-[13px] sm:text-[14px] focus:ring-2 focus:ring-green-500 outline-none" />
         </div>
+
+        {liveProfit!== 0 && (
+          <p className={`mt-2 text-[12px] font-medium ${liveProfit > 0? "text-green-600" : "text-red-600"}`}>
+            Profit: Rs. {liveProfit} {form.buyPrice && Number(form.buyPrice) > 0? `(${Math.round((liveProfit / Number(form.buyPrice)) * 100)}%)` : ""}
+          </p>
+        )}
+
         <div className="flex gap-2 mt-3">
           <button type="submit" className="bg-green-600 hover:bg-green-700 text-white px-4 sm:px-6 py-2 sm:py-2.5 rounded-lg font-medium transition text-[13px] sm:text-[14px]">{editId? "Update" : "+ Add"}</button>
-          {editId && <button type="button" onClick={() => { setEditId(null); setForm({ name: "", price: "", unit: "bag", stock: "100" }); }} className="bg-gray-100 hover:bg-gray-200 px-4 sm:px-6 py-2 sm:py-2.5 rounded-lg text-[13px] sm:text-[14px]">Cancel</button>}
+          {editId && <button type="button" onClick={() => { setEditId(null); setForm({ name: "", buyPrice: "", sellPrice: "", unit: "bag", stock: "100" }); }} className="bg-gray-100 hover:bg-gray-200 px-4 sm:px-6 py-2 sm:py-2.5 rounded-lg text-[13px] sm:text-[14px]">Cancel</button>}
         </div>
       </form>
 
       {loading? <p className="text-center text-gray-400 py-10 text-[13px]">Loading...</p> : (
         <>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
-            {products.map((p) => (
-              <div key={p._id} className={`bg-white border border-gray-100 p-2.5 sm:p-4 rounded-xl shadow-sm hover:shadow-md transition flex flex-col ${p._id.startsWith("local_")? "bg-amber-50/60" : ""}`}>
-                <div className="flex justify-between items-start gap-1 mb-1">
-                  <p className="font-semibold text-gray-800 text-[12px] sm:text-[14px] leading-tight line-clamp-2">{p.name} {p._id.startsWith("local_") && <span className="text-[8px] bg-amber-200 text-amber-800 px-1 py-0.5 rounded-full ml-1">OFFLINE</span>}</p>
-                  {(p.stock?? 0) < 20 && <span className="text-[8px] sm:text-[10px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded-full whitespace-nowrap shrink-0">Low</span>}
+            {products.map((p) => {
+              const sell = p.sellPrice || p.price;
+              const buy = p.buyPrice || Math.round(sell * 0.75);
+              const profit = sell - buy;
+              return (
+                <div key={p._id} className={`bg-white border border-gray-100 p-2.5 sm:p-4 rounded-xl shadow-sm hover:shadow-md transition flex flex-col ${p._id.startsWith("local_")? "bg-amber-50/60" : ""}`}>
+                  <div className="flex justify-between items-start gap-1 mb-1">
+                    <p className="font-semibold text-gray-800 text-[12px] sm:text-[14px] leading-tight line-clamp-2">{p.name} {p._id.startsWith("local_") && <span className="text-[8px] bg-amber-200 text-amber-800 px-1 py-0.5 rounded-full ml-1">OFFLINE</span>}</p>
+                    {(p.stock?? 0) < 20 && <span className="text-[8px] sm:text-[10px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded-full whitespace-nowrap shrink-0">Low</span>}
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-1 mt-2 text-[10px]">
+                    <div className="bg-red-50 p-1.5 rounded text-center">
+                      <div className="text-gray-500">Buy</div>
+                      <div className="font-bold text-red-600">Rs.{buy}</div>
+                    </div>
+                    <div className="bg-blue-50 p-1.5 rounded text-center">
+                      <div className="text-gray-500">Sell</div>
+                      <div className="font-bold text-blue-600">Rs.{sell}</div>
+                    </div>
+                    <div className="bg-green-50 p-1.5 rounded text-center">
+                      <div className="text-gray-500">Profit</div>
+                      <div className="font-bold text-green-600">Rs.{profit}</div>
+                    </div>
+                  </div>
+
+                  <p className="text-[10px] sm:text-[12px] text-gray-400 mt-1">Stock: {p.stock?? 0} / {p.unit}</p>
+                  <div className="flex gap-1.5 mt-2 sm:mt-3">
+                    <button onClick={() => handleEdit(p)} className="flex-1 bg-blue-50 text-blue-600 hover:bg-blue-100 py-1.5 sm:py-2 rounded-lg text-[11px] sm:text-[13px] font-medium">Edit</button>
+                    <button onClick={() => handleDelete(p._id)} className="flex-1 bg-red-50 text-red-600 hover:bg-red-100 py-1.5 sm:py-2 rounded-lg text-[11px] sm:text-[13px] font-medium">Del</button>
+                  </div>
                 </div>
-                <p className="text-[11px] sm:text-[13px] text-gray-500 mt-0.5">Rs. <span className="font-bold text-gray-700">{p.price}</span>/{p.unit}</p>
-                <p className="text-[10px] sm:text-[12px] text-gray-400">Stock: {p.stock?? 0}</p>
-                <div className="flex gap-1.5 mt-2 sm:mt-3">
-                  <button onClick={() => handleEdit(p)} className="flex-1 bg-blue-50 text-blue-600 hover:bg-blue-100 py-1.5 sm:py-2 rounded-lg text-[11px] sm:text-[13px] font-medium">Edit</button>
-                  <button onClick={() => handleDelete(p._id)} className="flex-1 bg-red-50 text-red-600 hover:bg-red-100 py-1.5 sm:py-2 rounded-lg text-[11px] sm:text-[13px] font-medium">Del</button>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
 
           {pagination.hasMore && (

@@ -9,7 +9,14 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 type Params = { params: Promise<{ id: string }> };
-type ProductBody = { name?: string; price?: number; unit?: string; stock?: number };
+type ProductBody = { 
+  name?: string; 
+  price?: number; 
+  buyPrice?: number;
+  sellPrice?: number;
+  unit?: string; 
+  stock?: number 
+};
 
 function isValidObjectId(id: string): boolean {
   return Types.ObjectId.isValid(id);
@@ -31,7 +38,7 @@ export async function GET(_req: NextRequest, { params }: Params) {
     const product = await Product.findOne({ 
       _id: id, 
       userId: new Types.ObjectId(session.user.id) 
-    }).lean();
+    }).lean({ virtuals: true });
     
     if (!product) return NextResponse.json({ message: "Product not found" }, { status: 404 });
     return NextResponse.json(product);
@@ -55,19 +62,37 @@ export async function PUT(req: NextRequest, { params }: Params) {
     await dbConnect();
     const body: ProductBody = await req.json();
     
+    // Build update object with backward compat
+    const updateData: Record<string, unknown> = {
+      lastSyncedAt: new Date(),
+      synced: true
+    };
+
+    if (body.name) updateData.name = body.name.trim();
+    if (body.unit) updateData.unit = body.unit.trim();
+    if (body.stock !== undefined) updateData.stock = Number(body.stock);
+    
+    // Handle new pricing
+    if (body.buyPrice !== undefined) updateData.buyPrice = Number(body.buyPrice);
+    if (body.sellPrice !== undefined) {
+      updateData.sellPrice = Number(body.sellPrice);
+      updateData.price = Number(body.sellPrice); // keep old field synced
+    } else if (body.price !== undefined) {
+      // old client sending only price
+      updateData.sellPrice = Number(body.price);
+      updateData.price = Number(body.price);
+    }
+
     const updated = await Product.findOneAndUpdate(
       { _id: id, userId: new Types.ObjectId(session.user.id) },
-      { 
-        ...body, 
-        lastSyncedAt: new Date(),
-        synced: true 
-      },
+      updateData,
       { new: true, runValidators: true }
-    );
+    ).lean({ virtuals: true });
 
     if (!updated) return NextResponse.json({ message: "Product not found" }, { status: 404 });
     return NextResponse.json(updated);
-  } catch {
+  } catch (error) {
+    console.error("PUT error:", error);
     return NextResponse.json({ message: "Failed to update" }, { status: 400 });
   }
 }

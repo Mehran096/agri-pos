@@ -10,7 +10,9 @@ export const runtime = "nodejs";
 
 type ProductBody = { 
   name: string; 
-  price: number; 
+  price?: number; // old field - keep optional
+  buyPrice: number;
+  sellPrice: number;
   unit: string; 
   stock?: number;
   localId?: string;
@@ -42,7 +44,7 @@ export async function GET(req: NextRequest) {
     }
 
     const [products, totalCount] = await Promise.all([
-      Product.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
+      Product.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit).lean({ virtuals: true }),
       Product.countDocuments(query),
     ]);
 
@@ -76,8 +78,17 @@ export async function POST(req: NextRequest) {
     await dbConnect();
     const body: ProductBody = await req.json();
 
-    if (!body.name || !body.price || !body.unit) {
-      return NextResponse.json({ error: "name, price, unit required" }, { status: 400 });
+    // ✅ Now require buyPrice & sellPrice
+    if (!body.name || !body.unit) {
+      return NextResponse.json({ error: "name, unit required" }, { status: 400 });
+    }
+
+    // Handle both old (price) and new (buyPrice/sellPrice) formats
+    const buy = body.buyPrice ?? 0;
+    const sell = body.sellPrice ?? body.price;
+
+    if (!sell) {
+      return NextResponse.json({ error: "sellPrice or price required" }, { status: 400 });
     }
 
     const userObjectId = new Types.ObjectId(session.user.id);
@@ -94,7 +105,9 @@ export async function POST(req: NextRequest) {
 
     const product = await Product.create({
       name: body.name.trim(),
-      price: Number(body.price),
+      buyPrice: Number(buy),
+      sellPrice: Number(sell),
+      price: Number(sell), // keep backward compat
       unit: body.unit.trim(),
       stock: body.stock ?? 100,
       userId: userObjectId,

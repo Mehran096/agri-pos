@@ -13,7 +13,13 @@ type SaleBody = {
   productId: string;
   productName?: string;
   quantity: number;
-  price: number;
+  price?: number;
+  buyPrice?: number;
+  sellPrice?: number;
+  originalPrice?: number;
+  discount?: number;
+  profit?: number;
+  total?: number;
   soldBy?: string;
   localId?: string;
   customerName?: string;
@@ -83,17 +89,20 @@ export async function GET(req: NextRequest) {
     if (query.createdAt) matchStage.createdAt = query.createdAt;
     if (query.productName) matchStage.productName = query.productName;
 
-    const [sales, totalCount, totalAgg] = await Promise.all([
+    const [sales, totalCount, totalAgg, profitAgg] = await Promise.all([
       Sale.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
       Sale.countDocuments(query),
+      Sale.aggregate([{ $match: matchStage }, { $group: { _id: null, total: { $sum: "$total" }, profit: { $sum: "$profit" } } }]),
       Sale.aggregate([{ $match: matchStage }, { $group: { _id: null, total: { $sum: "$total" } } }]),
     ]);
 
-    const totalResult = totalAgg[0] as { total: number } | undefined;
+    const totalResult = totalAgg[0] as { total: number; profit: number } | undefined;
+    const _profitResult = profitAgg[0] as { total: number } | undefined;
 
     return NextResponse.json({
       sales,
       total: totalResult?.total ?? 0,
+      profit: totalResult?.profit ?? 0,
       filter,
       count: totalCount,
       pagination: {
@@ -120,8 +129,8 @@ export async function POST(req: NextRequest) {
     await dbConnect();
     const body: SaleBody = await req.json();
 
-    if (!body.productId || !body.quantity || !body.price) {
-      return NextResponse.json({ error: "productId, quantity, price required" }, { status: 400 });
+    if (!body.productId || !body.quantity) {
+      return NextResponse.json({ error: "productId, quantity required" }, { status: 400 });
     }
     if (body.quantity <= 0) {
       return NextResponse.json({ error: "Quantity must be > 0" }, { status: 400 });
@@ -129,7 +138,6 @@ export async function POST(req: NextRequest) {
 
     const userObjectId = new Types.ObjectId(session.user.id);
 
-    // OFFLINE IDEMPOTENCY - prevent double sale
     if (body.localId) {
       const existing = await Sale.findOne({ localId: body.localId, userId: userObjectId }).lean();
       if (existing) {
@@ -146,17 +154,29 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Product not found" }, { status: 404 });
     }
 
-    // For offline sales, stock check is soft (stock may be outdated)
     if (!body.localId && product.stock < body.quantity) {
       return NextResponse.json({ error: `Only ${product.stock} left in stock` }, { status: 400 });
     }
 
+    const buyPrice = body.buyPrice ?? product.buyPrice ?? 0;
+    const originalPrice = body.originalPrice ?? product.sellPrice ?? product.price;
+    const sellPrice = body.sellPrice ?? body.price ?? originalPrice;
+    const quantity = Number(body.quantity);
+    const total = body.total ?? sellPrice * quantity;
+    const discount = body.discount ?? (originalPrice - sellPrice) * quantity;
+    const profit = body.profit ?? (sellPrice - buyPrice) * quantity;
+
     const sale = await Sale.create({
       productId: new Types.ObjectId(body.productId),
       productName: body.productName?.trim() || product.name,
-      quantity: Number(body.quantity),
-      price: Number(body.price),
-      total: Number(body.quantity) * Number(body.price),
+      quantity,
+      price: Number(sellPrice),
+      buyPrice: Number(buyPrice),
+      sellPrice: Number(sellPrice),
+      originalPrice: Number(originalPrice),
+      discount: Number(discount),
+      profit: Number(profit),
+      total: Number(total),
       soldBy: body.soldBy?.trim() || "shop",
       userId: userObjectId,
       localId: body.localId || `online_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
@@ -166,10 +186,9 @@ export async function POST(req: NextRequest) {
       offlineCreatedAt: body.offlineCreatedAt ? new Date(body.offlineCreatedAt) : new Date(),
     });
 
-    // Deduct stock (allow negative for offline case, will reconcile later)
     await Product.findOneAndUpdate(
       { _id: body.productId, userId: userObjectId },
-      { $inc: { stock: -body.quantity }, $set: { lastSyncedAt: new Date() } }
+      { $inc: { stock: -quantity }, $set: { lastSyncedAt: new Date() } }
     );
 
     return NextResponse.json(sale, { status: 201 });

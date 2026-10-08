@@ -5,6 +5,11 @@ export interface ISale {
   productName: string;
   quantity: number;
   price: number;
+  buyPrice: number;
+  sellPrice: number;
+  originalPrice: number;
+  discount: number;
+  profit: number;
   total: number;
   soldBy?: string;
   userId: Types.ObjectId;
@@ -23,16 +28,24 @@ const SaleSchema = new Schema<ISale>(
     productId: { type: Schema.Types.ObjectId, ref: "Product", required: true, index: true },
     productName: { type: String, required: true, trim: true },
     quantity: { type: Number, required: true, min: 1 },
-    price: { type: Number, required: true },
+    
+    // Pricing
+    price: { type: Number, required: true }, // final selling price (for backward compat)
+    buyPrice: { type: Number, required: true, default: 0 },
+    sellPrice: { type: Number, required: true, default: 0 },
+    originalPrice: { type: Number, required: true, default: 0 }, // e.g. 651
+    discount: { type: Number, required: true, default: 0 }, // e.g. 51 if gave 600
+    profit: { type: Number, required: true, default: 0 }, // (sellPrice - buyPrice) * qty
     total: { type: Number, required: true },
+
     soldBy: { type: String, default: "shop" },
     userId: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
 
-    // OFFLINE - optional for backward compat, but unique when present
+    // OFFLINE
     localId: { 
       type: String, 
       unique: true, 
-      sparse: true, // allows multiple null, but unique when value exists
+      sparse: true,
       index: true 
     },
     customerName: { type: String, default: "Walk-in" },

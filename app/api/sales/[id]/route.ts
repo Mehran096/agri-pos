@@ -10,6 +10,13 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 type Params = { params: Promise<{ id: string }> };
+type SaleUpdateBody = {
+  quantity?: number;
+  sellPrice?: number;
+  price?: number;
+  customerName?: string;
+  paymentType?: string;
+};
 
 function isValidObjectId(id: string): boolean {
   return Types.ObjectId.isValid(id);
@@ -53,17 +60,20 @@ export async function PUT(req: NextRequest, { params }: Params) {
     }
 
     await dbConnect();
-    const body = (await req.json()) as { quantity: number };
+    const body = (await req.json()) as SaleUpdateBody;
     
-    if (!body.quantity || body.quantity <= 0) {
-      return NextResponse.json({ error: "Valid quantity required" }, { status: 400 });
-    }
-
     const userObjectId = new Types.ObjectId(session.user.id);
     const existingSale = await Sale.findOne({ _id: id, userId: userObjectId });
     if (!existingSale) return NextResponse.json({ error: "Sale not found" }, { status: 404 });
 
-    const diff = body.quantity - existingSale.quantity;
+    const newQuantity = body.quantity ?? existingSale.quantity;
+    const newSellPrice = body.sellPrice ?? body.price ?? existingSale.sellPrice;
+
+    if (newQuantity <= 0) {
+      return NextResponse.json({ error: "Valid quantity required" }, { status: 400 });
+    }
+
+    const diff = newQuantity - existingSale.quantity;
 
     if (diff > 0) {
       const product = await Product.findOne({ _id: existingSale.productId, userId: userObjectId });
@@ -73,13 +83,28 @@ export async function PUT(req: NextRequest, { params }: Params) {
       }
     }
 
-    await Product.findOneAndUpdate(
-      { _id: existingSale.productId, userId: userObjectId },
-      { $inc: { stock: -diff }, $set: { lastSyncedAt: new Date() } }
-    );
+    if (diff !== 0) {
+      await Product.findOneAndUpdate(
+        { _id: existingSale.productId, userId: userObjectId },
+        { $inc: { stock: -diff }, $set: { lastSyncedAt: new Date() } }
+      );
+    }
 
-    existingSale.quantity = body.quantity;
-    existingSale.total = body.quantity * existingSale.price;
+    // Recalculate profit/discount if price changed
+    const buyPrice = existingSale.buyPrice || 0;
+    const originalPrice = existingSale.originalPrice || newSellPrice;
+
+    existingSale.quantity = newQuantity;
+    existingSale.sellPrice = Number(newSellPrice);
+    existingSale.price = Number(newSellPrice);
+    existingSale.total = newQuantity * Number(newSellPrice);
+    existingSale.profit = (Number(newSellPrice) - buyPrice) * newQuantity;
+    existingSale.discount = (originalPrice - Number(newSellPrice)) * newQuantity;
+    existingSale.originalPrice = Number(originalPrice);
+
+    if (body.customerName) existingSale.customerName = body.customerName;
+    if (body.paymentType) existingSale.paymentType = body.paymentType;
+
     await existingSale.save();
 
     return NextResponse.json(existingSale);

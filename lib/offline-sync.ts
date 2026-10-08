@@ -5,6 +5,9 @@ export interface OfflineSaleData {
   productName: string;
   quantity: number;
   price: number;
+  buyPrice?: number;
+  sellPrice?: number;
+  profit?: number;
   total: number;
   userId: string;
   soldBy?: string;
@@ -27,12 +30,19 @@ export async function saveSaleOffline(saleData: OfflineSaleData): Promise<string
   const localId = genLocalId();
   const now = new Date().toISOString();
   
+  const buy = saleData.buyPrice ?? 0;
+  const sell = saleData.sellPrice ?? saleData.price;
+  const profitPerUnit = sell - buy;
+
   const newSale: OfflineSale = {
     localId,
     productId: saleData.productId,
     productName: saleData.productName,
     quantity: saleData.quantity,
-    price: saleData.price,
+    price: sell,
+    buyPrice: buy,
+    sellPrice: sell,
+    profit: profitPerUnit * saleData.quantity,
     total: saleData.total,
     soldBy: saleData.soldBy || 'shop',
     customerName: saleData.customerName || 'Walk-in',
@@ -88,7 +98,11 @@ export async function syncOfflineSales(): Promise<{ synced: number; failed: numb
           productId: sale.productId,
           productName: sale.productName,
           quantity: sale.quantity,
-          price: sale.price,
+          price: sale.sellPrice || sale.price,
+          buyPrice: sale.buyPrice,
+          sellPrice: sale.sellPrice || sale.price,
+          profit: sale.profit,
+          total: sale.total,
           localId: sale.localId,
           customerName: sale.customerName,
           paymentType: sale.paymentType,

@@ -5,7 +5,6 @@ import User from "@/models/User";
 import mongoose from "mongoose";
 
 const PRODUCTS_100 = [
-  // 25 BAG
   { name: "Sona DAP 50kg", price: 12500, unit: "bag", stock: 100 },
   { name: "Engro Urea 50kg", price: 3800, unit: "bag", stock: 150 },
   { name: "Sona Urea 50kg", price: 3750, unit: "bag", stock: 120 },
@@ -31,7 +30,6 @@ const PRODUCTS_100 = [
   { name: "Mulching Sheet Roll", price: 4200, unit: "bag", stock: 40 },
   { name: "Spray Machine 20L Manual", price: 3500, unit: "bag", stock: 50 },
   { name: "Cow Dung Compost 50kg", price: 1200, unit: "bag", stock: 100 },
-  // 25 LITER
   { name: "Roundup Glyphosate 1L", price: 950, unit: "liter", stock: 100 },
   { name: "Lambda Cyhalothrin 1L", price: 1250, unit: "liter", stock: 100 },
   { name: "Bifenthrin 10EC 1L", price: 1100, unit: "liter", stock: 90 },
@@ -57,7 +55,6 @@ const PRODUCTS_100 = [
   { name: "Neem Oil 1L", price: 1250, unit: "liter", stock: 80 },
   { name: "Bio Pesticide 1L", price: 1450, unit: "liter", stock: 60 },
   { name: "Weedicide Dual Gold 1L", price: 2100, unit: "liter", stock: 55 },
-  // 25 KG
   { name: "Zinc Sulphate 33% 1kg", price: 350, unit: "kg", stock: 200 },
   { name: "Mancozeb 75WP 1kg", price: 950, unit: "kg", stock: 110 },
   { name: "Sulfur 80WP 1kg", price: 750, unit: "kg", stock: 100 },
@@ -83,7 +80,6 @@ const PRODUCTS_100 = [
   { name: "Coriander Seed 1kg", price: 650, unit: "kg", stock: 100 },
   { name: "Fenugreek Seed 1kg", price: 750, unit: "kg", stock: 100 },
   { name: "Pea Seed 1kg", price: 850, unit: "kg", stock: 80 },
-  // 25 ML
   { name: "Emamectin Benzoate 400ml", price: 1450, unit: "ml", stock: 80 },
   { name: "Imidacloprid 250ml", price: 650, unit: "ml", stock: 120 },
   { name: "Abamectin 250ml", price: 750, unit: "ml", stock: 90 },
@@ -115,19 +111,26 @@ export async function POST() {
   try {
     await dbConnect();
     const user = await User.findOne();
-    const userId = user?._id?? new mongoose.Types.ObjectId();
+    const userId = user?._id ?? new mongoose.Types.ObjectId();
 
     await Product.deleteMany({});
 
-    const productsWithUser = PRODUCTS_100.map((p) => ({
-     ...p,
-      userId,
-    }));
+    const productsWithUser = PRODUCTS_100.map((p) => {
+      const sellPrice = p.price;
+      const buyPrice = Math.round(sellPrice * 0.82);
+      return {
+        ...p,
+        buyPrice,
+        sellPrice,
+        price: sellPrice,
+        userId,
+      };
+    });
 
     const inserted = await Product.insertMany(productsWithUser);
-    return NextResponse.json({ success: true, count: inserted.length });
+    return NextResponse.json({ success: true, count: inserted.length, message: `Seeded ${inserted.length} with Buy/Sell/Profit` });
   } catch (error) {
-    const message = error instanceof Error? error.message : "Unknown error";
+    const message = error instanceof Error ? error.message : "Unknown error";
     console.error("SEED ERROR:", message);
     return NextResponse.json({ success: false, error: message }, { status: 500 });
   }
