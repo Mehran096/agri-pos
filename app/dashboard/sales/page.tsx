@@ -303,7 +303,7 @@ export default function SalesPage() {
 
         {products.length === 0? <p className="text-center text-gray-400 py-8 bg-white rounded-xl border mb-5 text-[12px]">{loadingMoreProducts? "Loading products..." : isOffline? "No cached products - go online once to cache" : "No products"}</p> : (
           <>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2 sm:gap-3 mb-3">
+            <div className="grid grid-cols-1 sm:grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-2 sm:gap-3 mb-3">
               {products.map((p) => {
                 const mode = modeMap[p._id] || "main"; const qtyPerUnit = p.qtyPerUnit || (p.unit === "bag"? 50 : p.unit === "kg"? 1 : 1000); const subUnit = p.subUnit || (p.unit === "bag"? "kg" : p.unit === "bottle"? "ml" : p.unit);
                 const calc = getSellCalc(p); const outOfStock = p.stock <= 0.001; const isBag = p.unit === "bag"; const isBottle = p.unit === "bottle";
