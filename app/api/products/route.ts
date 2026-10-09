@@ -8,14 +8,17 @@ import { Types } from "mongoose";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-type ProductBody = { 
-  name: string; 
-  price?: number; // old field - keep optional
+type ProductBody = {
+  name: string;
+  price?: number;
   buyPrice: number;
   sellPrice: number;
-  unit: string; 
+  unit: string;
   stock?: number;
   localId?: string;
+  qtyPerUnit?: number;
+  subUnit?: string;
+  baseQtyInSub?: number;
 };
 
 type ProductQuery = {
@@ -34,7 +37,7 @@ export async function GET(req: NextRequest) {
     const searchParams = req.nextUrl.searchParams;
     const search = searchParams.get("search")?.trim() || "";
     const page = Math.max(1, parseInt(searchParams.get("page") || "1", 10));
-    const limit = Math.min(100, Math.max(1, parseInt(searchParams.get("limit") || "50", 10)));
+    const limit = Math.min(200, Math.max(1, parseInt(searchParams.get("limit") || "50", 10)));
     const skip = (page - 1) * limit;
 
     const userObjectId = new Types.ObjectId(session.user.id);
@@ -48,7 +51,7 @@ export async function GET(req: NextRequest) {
       Product.countDocuments(query),
     ]);
 
-    if (searchParams.has("page") || searchParams.has("search")) {
+    if (searchParams.has("page") || searchParams.has("search") || searchParams.has("limit")) {
       return NextResponse.json({
         products,
         pagination: {
@@ -76,14 +79,12 @@ export async function POST(req: NextRequest) {
     }
 
     await dbConnect();
-    const body: ProductBody = await req.json();
+    const body = await req.json() as ProductBody;
 
-    // ✅ Now require buyPrice & sellPrice
     if (!body.name || !body.unit) {
       return NextResponse.json({ error: "name, unit required" }, { status: 400 });
     }
 
-    // Handle both old (price) and new (buyPrice/sellPrice) formats
     const buy = body.buyPrice ?? 0;
     const sell = body.sellPrice ?? body.price;
 
@@ -91,12 +92,32 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "sellPrice or price required" }, { status: 400 });
     }
 
+    let qtyPerUnit = body.qtyPerUnit;
+    let subUnit = body.subUnit;
+
+    if (!qtyPerUnit) {
+      if (body.unit === "bag") qtyPerUnit = 50;
+      else if (body.unit === "bottle" || body.unit === "liter") qtyPerUnit = 1000;
+      else qtyPerUnit = 1;
+    }
+    if (!subUnit) {
+      if (body.unit === "bag") subUnit = "kg";
+      else if (body.unit === "bottle" || body.unit === "liter") subUnit = "ml";
+      else subUnit = "";
+    }
+
+    let baseQty = body.baseQtyInSub;
+    if (!baseQty) {
+      if (subUnit === "liter") baseQty = qtyPerUnit * 1000;
+      else baseQty = qtyPerUnit;
+    }
+
     const userObjectId = new Types.ObjectId(session.user.id);
 
     if (body.localId) {
-      const existing = await Product.findOne({ 
-        localId: body.localId, 
-        userId: userObjectId 
+      const existing = await Product.findOne({
+        localId: body.localId,
+        userId: userObjectId,
       }).lean();
       if (existing) {
         return NextResponse.json(existing, { status: 200 });
@@ -107,9 +128,12 @@ export async function POST(req: NextRequest) {
       name: body.name.trim(),
       buyPrice: Number(buy),
       sellPrice: Number(sell),
-      price: Number(sell), // keep backward compat
+      price: Number(sell),
       unit: body.unit.trim(),
       stock: body.stock ?? 100,
+      qtyPerUnit: Number(qtyPerUnit),
+      subUnit: subUnit,
+      baseQtyInSub: Number(baseQty),
       userId: userObjectId,
       localId: body.localId || undefined,
       synced: true,

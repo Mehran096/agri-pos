@@ -16,20 +16,27 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "🌾 Sona Fertilizer Shop - Sales & Stock",
-  description: "Fertilizer shop management - Sales Point, Products, Stock alerts, Reports. Fast mobile billing for agri shop. Offline-ready PWA.",
+  title: "Al-Farooq Zarghi Shop - الفاروق زرعی سٹور | Sales & Stock",
+  description: "Al-Farooq Zarghi Adwiyat & Beej Store - Seeds, Pesticides, Fertilizers. Fast billing, Stock alerts, Buy/Sell/Profit reports. 0333-9426374, 0321-9801598, 0345-9495414. Offline-ready PWA.",
+  applicationName: "Al-Farooq Zarghi Shop",
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
-    title: "Sona Shop",
+    title: "Al-Farooq",
   },
   icons: {
     icon: [
-      { url: "/icon-circle-180.png", sizes: "180x180", type: "image/png" },
-      { url: "/icon-circle-512.png", sizes: "512x512", type: "image/png" },
+      { url: "/logo.png", sizes: "180x180", type: "image/png" },
+      { url: "/logo.png", sizes: "192x192", type: "image/png" },
+      { url: "/logo.png", sizes: "512x512", type: "image/png" },
     ],
-    apple: [{ url: "/icon-circle-180.png", sizes: "180x180", type: "image/png" }],
+    apple: [{ url: "/logo.png", sizes: "180x180", type: "image/png" }],
+  },
+  openGraph: {
+    title: "Al-Farooq Zarghi Shop - الفاروق زرعی سٹور",
+    description: "Agricultural Seeds & Pesticides - Ismaila Swabi",
+    type: "website",
   },
 };
 
@@ -37,7 +44,7 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   maximumScale: 1,
-  themeColor: "#16a34a",
+  themeColor: "#166534",
   colorScheme: "light",
 };
 

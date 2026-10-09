@@ -16,6 +16,13 @@ type SaleUpdateBody = {
   price?: number;
   customerName?: string;
   paymentType?: string;
+  // NEW partial edit
+  quantityInSub?: number;
+  unit?: string;
+  subUnit?: string;
+  qtyPerUnit?: number;
+  isPartialSale?: boolean;
+  pricePerSub?: number;
 };
 
 function isValidObjectId(id: string): boolean {
@@ -60,7 +67,7 @@ export async function PUT(req: NextRequest, { params }: Params) {
     }
 
     await dbConnect();
-    const body = (await req.json()) as SaleUpdateBody;
+    const body = await req.json() as SaleUpdateBody;
     
     const userObjectId = new Types.ObjectId(session.user.id);
     const existingSale = await Sale.findOne({ _id: id, userId: userObjectId });
@@ -69,28 +76,27 @@ export async function PUT(req: NextRequest, { params }: Params) {
     const newQuantity = body.quantity ?? existingSale.quantity;
     const newSellPrice = body.sellPrice ?? body.price ?? existingSale.sellPrice;
 
-    if (newQuantity <= 0) {
+    if (newQuantity < 0.001) {
       return NextResponse.json({ error: "Valid quantity required" }, { status: 400 });
     }
 
     const diff = newQuantity - existingSale.quantity;
 
-    if (diff > 0) {
+    if (diff > 0.0001) {
       const product = await Product.findOne({ _id: existingSale.productId, userId: userObjectId });
       if (!product) return NextResponse.json({ error: "Product not found" }, { status: 404 });
-      if (product.stock < diff) {
-        return NextResponse.json({ error: `Only ${product.stock} stock left` }, { status: 400 });
+      if (product.stock < diff - 0.0001) {
+        return NextResponse.json({ error: `Only ${product.stock.toFixed(2)} stock left` }, { status: 400 });
       }
     }
 
-    if (diff !== 0) {
+    if (Math.abs(diff) > 0.0001) {
       await Product.findOneAndUpdate(
         { _id: existingSale.productId, userId: userObjectId },
         { $inc: { stock: -diff }, $set: { lastSyncedAt: new Date() } }
       );
     }
 
-    // Recalculate profit/discount if price changed
     const buyPrice = existingSale.buyPrice || 0;
     const originalPrice = existingSale.originalPrice || newSellPrice;
 
@@ -104,6 +110,21 @@ export async function PUT(req: NextRequest, { params }: Params) {
 
     if (body.customerName) existingSale.customerName = body.customerName;
     if (body.paymentType) existingSale.paymentType = body.paymentType;
+
+    // NEW: update partial fields if sent
+    if (body.unit) existingSale.unit = body.unit;
+    if (body.subUnit) existingSale.subUnit = body.subUnit;
+    if (body.qtyPerUnit !== undefined) existingSale.qtyPerUnit = Number(body.qtyPerUnit);
+    if (body.quantityInSub !== undefined) existingSale.quantityInSub = Number(body.quantityInSub);
+    if (body.isPartialSale !== undefined) existingSale.isPartialSale = Boolean(body.isPartialSale);
+    if (body.pricePerSub !== undefined) existingSale.pricePerSub = Number(body.pricePerSub);
+
+    // auto recalc quantityInSub if qty changed and it's partial
+    if (body.quantity !== undefined && existingSale.isPartialSale && existingSale.qtyPerUnit) {
+      if (body.quantityInSub === undefined) {
+        existingSale.quantityInSub = newQuantity * existingSale.qtyPerUnit;
+      }
+    }
 
     await existingSale.save();
 

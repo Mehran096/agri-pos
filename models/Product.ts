@@ -2,7 +2,7 @@ import { Schema, model, models, type Model, Types } from "mongoose";
 
 export interface IProduct {
   name: string;
-  price: number; // kept for backward compat - will sync with sellPrice
+  price: number;
   buyPrice: number;
   sellPrice: number;
   unit: string;
@@ -11,6 +11,9 @@ export interface IProduct {
   localId?: string;
   synced?: boolean;
   lastSyncedAt?: Date;
+  qtyPerUnit?: number;
+  subUnit?: string;
+  baseQtyInSub?: number;
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -19,76 +22,77 @@ const ProductSchema = new Schema<IProduct>(
   {
     name: { type: String, required: true, trim: true },
     
-    // NEW: Shopkeeper fields
-    buyPrice: { type: Number, required: true, default: 0, min: 0 }, // Kharid
-    sellPrice: { type: Number, required: true, default: 0, min: 0 }, // Frokht
-
-    // OLD: Keep for backward compatibility
-    price: { 
-      type: Number, 
-      required: true, 
-      min: 0,
-      default: 0 
-    },
+    buyPrice: { type: Number, required: true, default: 0, min: 0 },
+    sellPrice: { type: Number, required: true, default: 0, min: 0 },
+    price: { type: Number, required: true, min: 0, default: 0 },
 
     unit: { 
       type: String, 
-      enum: ["bag", "liter", "kg", "ml"], // ✅ your 4 units
+      enum: ["bag", "bottle", "liter", "kg", "ml", "pack", "piece", "g", "box", "ton"], // ✅ bottle added
       default: "bag", 
       trim: true 
     },
     
-    stock: { type: Number, required: true, default: 100, min: 0 },
-    
-    userId: {
-      type: Schema.Types.ObjectId,
-      ref: "User",
-      required: true,
-      index: true,
-    },
+    stock: { type: Number, required: true, default: 100, min: 0 }, // 9.8 bags allowed
 
-    // OFFLINE SYNC
+    qtyPerUnit: { 
+      type: Number, 
+      default: function(this: IProduct) {
+        if (this.unit === "bag") return 50;
+        if (this.unit === "bottle") return 1000;
+        if (this.unit === "liter") return 1000;
+        if (this.unit === "kg") return 1;
+        return 1;
+      }
+    },
+    subUnit: {
+      type: String,
+      enum: ["kg", "g", "ml", "liter", ""],
+      default: function(this: IProduct) {
+        if (this.unit === "bag") return "kg";
+        if (this.unit === "bottle") return "ml";
+        if (this.unit === "liter") return "ml";
+        return "kg";
+      }
+    },
+    baseQtyInSub: { type: Number, default: 0 },
+    
+    userId: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
     localId: { type: String, sparse: true, index: true },
     synced: { type: Boolean, default: true },
     lastSyncedAt: { type: Date, default: Date.now },
   },
-  { 
-    timestamps: true,
-    toJSON: { virtuals: true }, // to include profit
-    toObject: { virtuals: true }
-  }
+  { timestamps: true, toJSON: { virtuals: true }, toObject: { virtuals: true } }
 );
 
-// Virtual: Profit = Sell - Buy
 ProductSchema.virtual("profit").get(function () {
-  const sell = this.sellPrice || this.price || 0;
-  const buy = this.buyPrice || 0;
-  return sell - buy;
+  return (this.sellPrice || this.price || 0) - (this.buyPrice || 0);
 });
 
-// Virtual: Profit %
-ProductSchema.virtual("profitPercent").get(function () {
-  const buy = this.buyPrice || 0;
-  if (buy === 0) return 0;
-  const sell = this.sellPrice || this.price || 0;
-  return Math.round(((sell - buy) / buy) * 100);
+ProductSchema.virtual("pricePerSub").get(function () {
+  const qty = this.qtyPerUnit || 1;
+  const normalizedQty = this.subUnit === "liter" ? qty * 1000 : qty;
+  if (normalizedQty === 0) return 0;
+  return (this.sellPrice || this.price || 0) / normalizedQty;
 });
 
-// Auto-sync price = sellPrice before save (so old code still works)
 ProductSchema.pre("save", function () {
-  if (this.sellPrice) {
-    this.price = this.sellPrice;
-  } else if (this.price) {
-    this.sellPrice = this.price;
+  if (this.sellPrice) this.price = this.sellPrice;
+  else if (this.price) this.sellPrice = this.price;
+
+  if (this.qtyPerUnit) {
+    if (this.subUnit === "liter") {
+      this.baseQtyInSub = this.qtyPerUnit * 1000;
+    } else {
+      this.baseQtyInSub = this.qtyPerUnit;
+    }
+  } else {
+    this.baseQtyInSub = 0;
   }
-  
 });
 
-// Optimized compound indexes
 ProductSchema.index({ userId: 1, name: 1 });
 ProductSchema.index({ userId: 1, createdAt: -1 });
-ProductSchema.index({ userId: 1, localId: 1 });
-ProductSchema.index({ name: "text" });
 
 const Product = (models.Product as Model<IProduct>) || model<IProduct>("Product", ProductSchema);
 export default Product;

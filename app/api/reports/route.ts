@@ -8,18 +8,19 @@ import { Types } from "mongoose";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-type AggResult = { count: number; total: number; profit: number };
+type AggResult = { count: number; total: number; profit: number; buy: number };
 
-function empty() {
-  return { count: 0, total: 0, profit: 0 };
+function empty(): AggResult {
+  return { count: 0, total: 0, profit: 0, buy: 0 };
 }
 
-function fmt(arr: AggResult[]) {
+function fmt(arr: AggResult[]): AggResult {
   if (!arr || arr.length === 0) return empty();
   return {
     count: arr[0].count || 0,
     total: arr[0].total || 0,
     profit: arr[0].profit || 0,
+    buy: arr[0].buy || 0,
   };
 }
 
@@ -27,7 +28,6 @@ export async function GET() {
   try {
     const session = await getServerSession(authOptions);
     if (!session?.user?.id) {
-      // NEVER return 401 - return empty 200 so dashboard doesn't crash
       return NextResponse.json({
         today: empty(),
         month: empty(),
@@ -45,10 +45,19 @@ export async function GET() {
     const startMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     const startYear = new Date(now.getFullYear(), 0, 1);
 
-    const agg = (match: object) =>
+    const agg = (match: Record<string, unknown>) =>
       Sale.aggregate<AggResult>([
         { $match: match },
-        { $group: { _id: null, count: { $sum: 1 }, total: { $sum: "$total" }, profit: { $sum: { $ifNull: ["$profit", 0] } } } },
+        {
+          $group: {
+            _id: null,
+            count: { $sum: 1 },
+            total: { $sum: "$total" },
+            profit: { $sum: { $ifNull: ["$profit", 0] } },
+            // ✅ BUY = total - profit (works for bag/bottle and partial Kg/ml)
+            buy: { $sum: { $subtract: ["$total", { $ifNull: ["$profit", 0] }] } },
+          },
+        },
       ]);
 
     const [todayAgg, monthAgg, yearAgg, allAgg] = await Promise.all([
@@ -66,7 +75,6 @@ export async function GET() {
     });
   } catch (e) {
     console.error("GET /api/reports error:", e);
-    // NEVER return 500 - return empty 200
     return NextResponse.json({
       today: empty(),
       month: empty(),

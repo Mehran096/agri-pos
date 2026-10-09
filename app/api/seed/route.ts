@@ -107,30 +107,62 @@ const PRODUCTS_100 = [
   { name: "Fruit Fly Lure 100ml", price: 350, unit: "ml", stock: 150 },
 ];
 
+function parseFlexible(p: { name: string; unit: string }) {
+  const name = p.name.toLowerCase();
+  // extract kg number
+  const kgMatch = name.match(/(\d+(?:\.\d+)?)\s*kg/);
+  const mlMatch = name.match(/(\d+)\s*ml/);
+  const lMatch = name.match(/(\d+(?:\.\d+)?)\s*l\b/) &&!mlMatch? name.match(/(\d+(?:\.\d+)?)\s*l\b/) : null;
+
+  if (p.unit === "bag") {
+    const qty = kgMatch? Number(kgMatch[1]) : 50;
+    return { unit: "bag", qtyPerUnit: qty, subUnit: "kg", baseQtyInSub: qty };
+  }
+  if (p.unit === "liter") {
+    return { unit: "bottle", qtyPerUnit: 1, subUnit: "liter", baseQtyInSub: 1000 };
+  }
+  if (p.unit === "kg") {
+    return { unit: "kg", qtyPerUnit: 1, subUnit: "kg", baseQtyInSub: 1 };
+  }
+  if (p.unit === "ml") {
+    const qty = mlMatch? Number(mlMatch[1]) : 250;
+    return { unit: "bottle", qtyPerUnit: qty, subUnit: "ml", baseQtyInSub: qty };
+  }
+  return { unit: p.unit, qtyPerUnit: 1, subUnit: "", baseQtyInSub: 1 };
+}
+
 export async function POST() {
   try {
     await dbConnect();
     const user = await User.findOne();
-    const userId = user?._id ?? new mongoose.Types.ObjectId();
+    const userId = user?._id?? new mongoose.Types.ObjectId();
 
     await Product.deleteMany({});
 
     const productsWithUser = PRODUCTS_100.map((p) => {
       const sellPrice = p.price;
       const buyPrice = Math.round(sellPrice * 0.82);
+      const flex = parseFlexible(p);
       return {
-        ...p,
+      ...p,
         buyPrice,
         sellPrice,
         price: sellPrice,
         userId,
+        unit: flex.unit,
+        qtyPerUnit: flex.qtyPerUnit,
+        subUnit: flex.subUnit,
+        baseQtyInSub: flex.baseQtyInSub,
+        stock: p.stock, // will allow decimal later 9.80
+        synced: true,
+        lastSyncedAt: new Date(),
       };
     });
 
     const inserted = await Product.insertMany(productsWithUser);
-    return NextResponse.json({ success: true, count: inserted.length, message: `Seeded ${inserted.length} with Buy/Sell/Profit` });
+    return NextResponse.json({ success: true, count: inserted.length, message: `Seeded ${inserted.length} with flexible 20kg/40kg/50kg + 500ml/1L/1.5L/2L + Buy/Sell` });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error";
+    const message = error instanceof Error? error.message : "Unknown error";
     console.error("SEED ERROR:", message);
     return NextResponse.json({ success: false, error: message }, { status: 500 });
   }

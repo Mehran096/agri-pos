@@ -12,7 +12,7 @@ export const runtime = "nodejs";
 type SaleBody = {
   productId: string;
   productName?: string;
-  quantity: number;
+  quantity: number; // main unit - 0.05 bag = 2kg
   price?: number;
   buyPrice?: number;
   sellPrice?: number;
@@ -25,6 +25,13 @@ type SaleBody = {
   customerName?: string;
   paymentType?: string;
   offlineCreatedAt?: string;
+  // NEW flexible
+  unit?: string;
+  subUnit?: string;
+  qtyPerUnit?: number;
+  quantityInSub?: number; // 2 kg, 100 ml
+  isPartialSale?: boolean;
+  pricePerSub?: number;
 };
 
 type DateRange = { $gte?: Date; $lte?: Date };
@@ -89,15 +96,13 @@ export async function GET(req: NextRequest) {
     if (query.createdAt) matchStage.createdAt = query.createdAt;
     if (query.productName) matchStage.productName = query.productName;
 
-    const [sales, totalCount, totalAgg, profitAgg] = await Promise.all([
+    const [sales, totalCount, totalAgg] = await Promise.all([
       Sale.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
       Sale.countDocuments(query),
       Sale.aggregate([{ $match: matchStage }, { $group: { _id: null, total: { $sum: "$total" }, profit: { $sum: "$profit" } } }]),
-      Sale.aggregate([{ $match: matchStage }, { $group: { _id: null, total: { $sum: "$total" } } }]),
     ]);
 
     const totalResult = totalAgg[0] as { total: number; profit: number } | undefined;
-    const _profitResult = profitAgg[0] as { total: number } | undefined;
 
     return NextResponse.json({
       sales,
@@ -127,12 +132,13 @@ export async function POST(req: NextRequest) {
     }
 
     await dbConnect();
-    const body: SaleBody = await req.json();
+    const body = await req.json() as SaleBody;
 
-    if (!body.productId || !body.quantity) {
+    if (!body.productId || body.quantity === undefined) {
       return NextResponse.json({ error: "productId, quantity required" }, { status: 400 });
     }
-    if (body.quantity <= 0) {
+    // ✅ Allow decimal: 0.05 bag = 2kg, 0.1 bottle = 100ml
+    if (body.quantity < 0.001) {
       return NextResponse.json({ error: "Quantity must be > 0" }, { status: 400 });
     }
 
@@ -154,17 +160,27 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Product not found" }, { status: 404 });
     }
 
-    if (!body.localId && product.stock < body.quantity) {
-      return NextResponse.json({ error: `Only ${product.stock} left in stock` }, { status: 400 });
+    const quantity = Number(body.quantity); // e.g. 0.05
+
+    // ✅ Stock check with decimal - allow if not offline sync
+    if (!body.localId && product.stock < quantity - 0.0001) {
+      return NextResponse.json({ error: `Only ${product.stock.toFixed(2)} left in stock` }, { status: 400 });
     }
 
     const buyPrice = body.buyPrice ?? product.buyPrice ?? 0;
-    const originalPrice = body.originalPrice ?? product.sellPrice ?? product.price;
+    const originalPrice = body.originalPrice ?? product.sellPrice ?? product.price ?? 0;
     const sellPrice = body.sellPrice ?? body.price ?? originalPrice;
-    const quantity = Number(body.quantity);
     const total = body.total ?? sellPrice * quantity;
     const discount = body.discount ?? (originalPrice - sellPrice) * quantity;
     const profit = body.profit ?? (sellPrice - buyPrice) * quantity;
+
+    // NEW: flexible fields
+    const unit = body.unit ?? product.unit ?? "bag";
+    const subUnit = body.subUnit ?? product.subUnit ?? "";
+    const qtyPerUnit = body.qtyPerUnit ?? product.qtyPerUnit ?? 1;
+    const quantityInSub = body.quantityInSub ?? (body.isPartialSale ? quantity * qtyPerUnit : 0);
+    const isPartialSale = body.isPartialSale ?? (quantityInSub > 0 && quantityInSub !== quantity);
+    const pricePerSub = body.pricePerSub ?? (qtyPerUnit > 0 ? sellPrice / qtyPerUnit : 0);
 
     const sale = await Sale.create({
       productId: new Types.ObjectId(body.productId),
@@ -184,6 +200,13 @@ export async function POST(req: NextRequest) {
       paymentType: body.paymentType || "cash",
       synced: true,
       offlineCreatedAt: body.offlineCreatedAt ? new Date(body.offlineCreatedAt) : new Date(),
+      // NEW
+      unit,
+      subUnit,
+      qtyPerUnit: Number(qtyPerUnit),
+      quantityInSub: Number(quantityInSub),
+      isPartialSale: Boolean(isPartialSale),
+      pricePerSub: Number(pricePerSub),
     });
 
     await Product.findOneAndUpdate(

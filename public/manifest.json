@@ -1,32 +1,38 @@
 {
   "id": "/",
-  "name": "Sona Fertilizer Shop - Sales & Stock",
-  "short_name": "Sona Shop",
-  "description": "Fertilizer shop management - Sales Point, Products, Stock alerts, Offline-ready",
+  "name": "Al-Farooq Zarghi Shop - الفاروق زرعی سٹور",
+  "short_name": "Al-Farooq",
+  "description": "Al-Farooq Zarghi Adwiyat & Beej Store - Agricultural Seeds, Pesticides, Fertilizers. 03459485414",
   "start_url": "/login",
   "scope": "/",
   "display": "standalone",
   "display_override": ["standalone", "window-controls-overlay"],
   "orientation": "portrait-primary",
   "background_color": "#ffffff",
-  "theme_color": "#16a34a",
+  "theme_color": "#166534",
   "categories": ["business", "productivity"],
   "lang": "en",
   "icons": [
     {
-      "src": "/icon-circle-180.png",
+      "src": "/logo.png",
       "sizes": "180x180",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/icon-circle-512.png",
+      "src": "/logo.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/logo.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/icon-circle-512.png",
+      "src": "/logo.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"
@@ -38,21 +44,21 @@
       "short_name": "Sales",
       "description": "Make a new sale",
       "url": "/dashboard/sales",
-      "icons": [{ "src": "/icon-circle-180.png", "sizes": "180x180" }]
+      "icons": [{ "src": "/logo.png", "sizes": "180x180" }]
     },
     {
       "name": "Products",
       "short_name": "Products",
       "description": "Manage products",
       "url": "/dashboard/products",
-      "icons": [{ "src": "/icon-circle-180.png", "sizes": "180x180" }]
+      "icons": [{ "src": "/logo.png", "sizes": "180x180" }]
     },
     {
       "name": "Sales History",
       "short_name": "History",
       "description": "View sales history",
       "url": "/dashboard/sales/history",
-      "icons": [{ "src": "/icon-circle-180.png", "sizes": "180x180" }]
+      "icons": [{ "src": "/logo.png", "sizes": "180x180" }]
     }
   ]
 }

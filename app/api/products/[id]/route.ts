@@ -15,7 +15,10 @@ type ProductBody = {
   buyPrice?: number;
   sellPrice?: number;
   unit?: string; 
-  stock?: number 
+  stock?: number;
+  qtyPerUnit?: number;
+  subUnit?: string;
+  baseQtyInSub?: number;
 };
 
 function isValidObjectId(id: string): boolean {
@@ -60,27 +63,45 @@ export async function PUT(req: NextRequest, { params }: Params) {
     }
 
     await dbConnect();
-    const body: ProductBody = await req.json();
+    const body = await req.json() as ProductBody;
     
-    // Build update object with backward compat
-    const updateData: Record<string, unknown> = {
-      lastSyncedAt: new Date(),
-      synced: true
+    const updateData: Record<string, string | number | Date | boolean> = {
+      lastSyncedAt: new Date() as Date,
+      synced: true as boolean
     };
 
     if (body.name) updateData.name = body.name.trim();
     if (body.unit) updateData.unit = body.unit.trim();
     if (body.stock !== undefined) updateData.stock = Number(body.stock);
     
-    // Handle new pricing
     if (body.buyPrice !== undefined) updateData.buyPrice = Number(body.buyPrice);
     if (body.sellPrice !== undefined) {
       updateData.sellPrice = Number(body.sellPrice);
-      updateData.price = Number(body.sellPrice); // keep old field synced
+      updateData.price = Number(body.sellPrice);
     } else if (body.price !== undefined) {
-      // old client sending only price
       updateData.sellPrice = Number(body.price);
       updateData.price = Number(body.price);
+    }
+
+    // NEW: flexible size - allow edit 20kg -> 50kg, 500ml -> 1.5L
+    if (body.qtyPerUnit !== undefined) {
+      updateData.qtyPerUnit = Number(body.qtyPerUnit);
+    }
+    if (body.subUnit !== undefined) {
+      updateData.subUnit = body.subUnit;
+    }
+    // auto recalc baseQtyInSub
+    if (body.qtyPerUnit !== undefined || body.subUnit !== undefined) {
+      // fetch current to merge
+      const current = await Product.findOne({ _id: id, userId: new Types.ObjectId(session.user.id) }).lean();
+      const finalQty = body.qtyPerUnit ?? current?.qtyPerUnit ?? 1;
+      const finalSub = body.subUnit ?? current?.subUnit ?? "";
+      const finalBase = finalSub === "liter" ? finalQty * 1000 : finalQty;
+      updateData.baseQtyInSub = finalBase;
+      updateData.qtyPerUnit = Number(finalQty);
+      updateData.subUnit = finalSub;
+    } else if (body.baseQtyInSub !== undefined) {
+      updateData.baseQtyInSub = Number(body.baseQtyInSub);
     }
 
     const updated = await Product.findOneAndUpdate(

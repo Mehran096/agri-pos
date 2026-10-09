@@ -1,9 +1,10 @@
-const CACHE = 'sona-shop-v5-offline';
+const CACHE = 'al-farooq-zarghi-v1-offline';
 const PRECACHE = [
   '/login',
   '/manifest.json',
-  '/icon-circle-180.png',
-  '/icon-circle-512.png'
+  '/logo.png',
+  '/icon-192.png',
+  '/icon-512.png'
 ];
 
 self.addEventListener('install', (e) => {
@@ -37,12 +38,10 @@ self.addEventListener('fetch', (e) => {
   }
 
   // 2. PAGES (navigate) -> Network First + offline fallback
-  // This prevents auth loop crash
   if (req.mode === 'navigate') {
     e.respondWith(
       fetch(req)
         .then((res) => {
-          // Only cache successful html
           if (res.ok && res.headers.get('content-type')?.includes('text/html')) {
             const clone = res.clone();
             caches.open(CACHE).then((c) => c.put(req, clone));
@@ -53,11 +52,9 @@ self.addEventListener('fetch', (e) => {
           const cache = await caches.open(CACHE);
           const cached = await cache.match(req);
           if (cached) return cached;
-          // Try login as last fallback
           const login = await cache.match('/login');
           if (login) return login;
-          // Ultimate fallback
-          return new Response('Offline - Please connect', {
+          return new Response('Offline - Please connect to Al-Farooq Shop', {
             status: 503,
             headers: { 'Content-Type': 'text/plain' }
           });
@@ -66,13 +63,12 @@ self.addEventListener('fetch', (e) => {
     return;
   }
 
-  // 3. ASSETS (js/css/images/fonts) -> Cache First = offline working
+  // 3. ASSETS (js/css/images/fonts) -> Cache First
   e.respondWith(
     caches.match(req).then((cached) => {
       if (cached) return cached;
       return fetch(req)
         .then((res) => {
-          // Only cache ok, basic/cors
           if (!res.ok || (res.type !== 'basic' && res.type !== 'cors')) {
             return res;
           }
@@ -81,7 +77,6 @@ self.addEventListener('fetch', (e) => {
           return res;
         })
         .catch(() => {
-          // For images, return 1x1 transparent if offline and not cached
           if (req.destination === 'image') {
             return new Response('', { status: 503, statusText: 'Offline Image' });
           }

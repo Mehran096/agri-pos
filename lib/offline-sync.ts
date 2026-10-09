@@ -3,7 +3,7 @@ import { offlineDB, OfflineSale } from './offline-db';
 export interface OfflineSaleData {
   productId: string;
   productName: string;
-  quantity: number;
+  quantity: number; // in main unit - can be 0.05 bag, 0.1 bottle
   price: number;
   buyPrice?: number;
   sellPrice?: number;
@@ -13,6 +13,14 @@ export interface OfflineSaleData {
   soldBy?: string;
   customerName?: string;
   paymentType?: string;
+
+  // NEW: flexible
+  unit?: string; // bag, bottle, kg, ml
+  subUnit?: string; // kg, ml, liter
+  qtyPerUnit?: number; // 20,40,50,500,1000,1500
+  quantityInSub?: number; // 2kg, 100ml
+  isPartialSale?: boolean;
+  pricePerSub?: number;
 }
 
 type SyncManager = { register: (tag: string) => Promise<void> };
@@ -34,15 +42,19 @@ export async function saveSaleOffline(saleData: OfflineSaleData): Promise<string
   const sell = saleData.sellPrice ?? saleData.price;
   const profitPerUnit = sell - buy;
 
+  // quantity is already in main unit (0.05 bag for 2kg)
+  const qtyMain = saleData.quantity;
+  const qtySub = saleData.quantityInSub || 0;
+
   const newSale: OfflineSale = {
     localId,
     productId: saleData.productId,
     productName: saleData.productName,
-    quantity: saleData.quantity,
+    quantity: qtyMain,
     price: sell,
     buyPrice: buy,
     sellPrice: sell,
-    profit: profitPerUnit * saleData.quantity,
+    profit: saleData.profit ?? profitPerUnit * qtyMain,
     total: saleData.total,
     soldBy: saleData.soldBy || 'shop',
     customerName: saleData.customerName || 'Walk-in',
@@ -51,21 +63,30 @@ export async function saveSaleOffline(saleData: OfflineSaleData): Promise<string
     createdAt: now,
     offlineCreatedAt: now,
     synced: 0,
+
+    // NEW fields saved offline
+    unit: saleData.unit || "bag",
+    subUnit: saleData.subUnit || "",
+    qtyPerUnit: saleData.qtyPerUnit || 1,
+    quantityInSub: qtySub,
+    isPartialSale: saleData.isPartialSale || qtySub>0,
+    pricePerSub: saleData.pricePerSub || 0,
   };
 
   await offlineDB.sales.put(newSale);
   
   try {
+    // deduct decimal stock: 0.05 bag, 0.1 bottle
     const prod = await offlineDB.products.get(saleData.productId);
     if (prod) {
-      await offlineDB.products.update(saleData.productId, { stock: prod.stock - saleData.quantity });
+      await offlineDB.products.update(saleData.productId, { stock: prod.stock - qtyMain });
     } else {
-      await offlineDB.products.where('_id').equals(saleData.productId).modify((p) => {
-        p.stock -= saleData.quantity;
+      await offlineDB.products.where('_id').equals(saleData.productId).or("localId").equals(saleData.productId).modify((p) => {
+        p.stock = (p.stock || 0) - qtyMain;
       });
     }
   } catch {
-    // product not in cache, ignore
+    // product not in cache
   }
 
   if (typeof window !== 'undefined' && 'serviceWorker' in navigator && 'SyncManager' in window) {
@@ -74,9 +95,7 @@ export async function saveSaleOffline(saleData: OfflineSaleData): Promise<string
       if (isSyncRegistration(reg)) {
         await reg.sync.register('sync-sales');
       }
-    } catch {
-      // background sync not supported
-    }
+    } catch {}
   }
 
   return localId;
@@ -97,7 +116,13 @@ export async function syncOfflineSales(): Promise<{ synced: number; failed: numb
         body: JSON.stringify({
           productId: sale.productId,
           productName: sale.productName,
-          quantity: sale.quantity,
+          quantity: sale.quantity, // 0.05 bag
+          quantityInSub: sale.quantityInSub, // 2 kg
+          unit: sale.unit,
+          subUnit: sale.subUnit,
+          qtyPerUnit: sale.qtyPerUnit,
+          isPartialSale: sale.isPartialSale,
+          pricePerSub: sale.pricePerSub,
           price: sale.sellPrice || sale.price,
           buyPrice: sale.buyPrice,
           sellPrice: sale.sellPrice || sale.price,

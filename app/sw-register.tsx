@@ -1,20 +1,20 @@
 "use client";
 import { useEffect } from "react";
 
-const CURRENT_CACHE = "sona-shop-v5-offline";
+const CURRENT_CACHE = "al-farooq-zarghi-v1-offline";
 
 export default function SWRegister() {
  
   useEffect(() => {
     if (typeof window === "undefined" ||!("serviceWorker" in navigator)) return;
 
-    // 1. ONE TIME FIX: Delete ALL old caches except current v5
+    // 1. ONE TIME FIX: Delete ALL old caches except current
     const cleanOldCaches = async () => {
       try {
         const keys = await caches.keys();
         await Promise.all(
           keys
-            .filter((k) => k!== CURRENT_CACHE && (k.includes("agri-pwa") || k.includes("sona-shop-")))
+            .filter((k) => k!== CURRENT_CACHE && (k.includes("agri-pwa") || k.includes("sona-shop-") || k.includes("al-farooq-")))
             .map((k) => caches.delete(k))
         );
       } catch {
@@ -28,7 +28,7 @@ export default function SWRegister() {
       navigator.serviceWorker
         .register("/sw.js", { scope: "/" })
         .then((reg) => {
-          console.log("SW v5 registered:", reg.scope);
+          console.log("SW Al-Farooq v1 registered:", reg.scope);
 
           // 3. Auto-update when new SW found
           reg.addEventListener("updatefound", () => {
@@ -36,7 +36,7 @@ export default function SWRegister() {
             if (!newWorker) return;
             newWorker.addEventListener("statechange", () => {
               if (newWorker.state === "installed" && navigator.serviceWorker.controller) {
-                console.log("New SW installed, will activate on next reload");
+                console.log("New Al-Farooq SW installed, will activate on next reload");
               }
             });
           });
