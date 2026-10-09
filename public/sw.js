@@ -1,10 +1,14 @@
-const CACHE = 'al-farooq-zarghi-v1-offline';
+const CACHE = 'al-farooq-v4';
 const PRECACHE = [
   '/login',
-  '/manifest.json',
+  '/offline',
+  '/',
+  '/dashboard',
+  '/dashboard/sales',
+  '/dashboard/products',
+  '/dashboard/sales/history',
   '/logo.png',
-  '/icon-192.png',
-  '/icon-512.png'
+  '/manifest.json'
 ];
 
 self.addEventListener('install', (e) => {
@@ -12,6 +16,11 @@ self.addEventListener('install', (e) => {
     caches.open(CACHE)
       .then((c) => c.addAll(PRECACHE.map((url) => new Request(url, { cache: 'reload' }))))
       .then(() => self.skipWaiting())
+      .catch((err) => {
+        console.error("Al-Farooq precache failed:", err);
+        // Don't fail install completely - skip missing files
+        return self.skipWaiting();
+      })
   );
 });
 
@@ -27,17 +36,17 @@ self.addEventListener('fetch', (e) => {
   const req = e.request;
   const url = new URL(req.url);
 
-  // 1. NEVER cache API, non-GET, external, chrome-extension
   if (
     url.pathname.startsWith('/api') ||
     req.method !== 'GET' ||
     url.origin !== location.origin ||
-    url.protocol === 'chrome-extension:'
+    url.protocol === 'chrome-extension:' ||
+    url.pathname.startsWith('/_next/webpack-hmr')
   ) {
     return;
   }
 
-  // 2. PAGES (navigate) -> Network First + offline fallback
+  // PAGES -> Network First, then Cache, then /offline, then /login
   if (req.mode === 'navigate') {
     e.respondWith(
       fetch(req)
@@ -50,37 +59,59 @@ self.addEventListener('fetch', (e) => {
         })
         .catch(async () => {
           const cache = await caches.open(CACHE);
+          // Try exact page
           const cached = await cache.match(req);
           if (cached) return cached;
+          // Try offline branded page
+          const offline = await cache.match('/offline');
+          if (offline) return offline;
+          // Fallback to login (your start_url)
           const login = await cache.match('/login');
           if (login) return login;
-          return new Response('Offline - Please connect to Al-Farooq Shop', {
-            status: 503,
-            headers: { 'Content-Type': 'text/plain' }
+          // Last resort - home
+          const home = await cache.match('/');
+          if (home) return home;
+          
+          return new Response(`
+            <html><body style="font-family:system-ui;text-align:center;padding:40px">
+              <img src="/logo.png" style="width:80px;height:80px;border-radius:50%;border:2px solid #166534"/>
+              <h1>Al-Farooq Zarghi Shop</h1>
+              <p>الفاروق زرعی سٹور - Offline</p>
+              <p style="color:#666">Please connect to internet once</p>
+              <p style="font-size:12px;color:#999">0333-9426374</p>
+            </body></html>`, {
+            status: 200,
+            headers: { 'Content-Type': 'text/html' }
           });
         })
     );
     return;
   }
 
-  // 3. ASSETS (js/css/images/fonts) -> Cache First
+  // ASSETS -> Cache First, then Network
   e.respondWith(
     caches.match(req).then((cached) => {
       if (cached) return cached;
       return fetch(req)
         .then((res) => {
-          if (!res.ok || (res.type !== 'basic' && res.type !== 'cors')) {
+          if (!res.ok || (res.type !== 'basic' && res.type !== 'cors' && res.type !== 'default')) {
             return res;
           }
-          const clone = res.clone();
-          caches.open(CACHE).then((c) => c.put(req, clone));
+          // Don't cache Next.js chunk if 404
+          if (url.pathname.includes('_next/static') || url.pathname === '/logo.png' || url.pathname === '/manifest.json') {
+            const clone = res.clone();
+            caches.open(CACHE).then((c) => c.put(req, clone));
+          } else if (res.headers.get('content-type')?.includes('javascript') || res.headers.get('content-type')?.includes('css')) {
+            const clone = res.clone();
+            caches.open(CACHE).then((c) => c.put(req, clone));
+          }
           return res;
         })
         .catch(() => {
           if (req.destination === 'image') {
-            return new Response('', { status: 503, statusText: 'Offline Image' });
+            return caches.match('/logo.png');
           }
-          return new Response('', { status: 503, statusText: 'Offline' });
+          return new Response('', { status: 503, statusText: 'Offline - Al-Farooq' });
         });
     })
   );

@@ -2,7 +2,7 @@
   "id": "/",
   "name": "Al-Farooq Zarghi Shop - الفاروق زرعی سٹور",
   "short_name": "Al-Farooq",
-  "description": "Al-Farooq Zarghi Adwiyat & Beej Store - Agricultural Seeds, Pesticides, Fertilizers. 0333-9426374, 0321-9801598, 0345-9495414",
+  "description": "Al-Farooq Zarghi Adwiyat & Beej Store - Seeds, Pesticides, Fertilizers. 0333-9426374, 0321-9801598, 0345-9495414 - Offline POS",
   "start_url": "/login",
   "scope": "/",
   "display": "standalone",
@@ -13,12 +13,6 @@
   "categories": ["business", "productivity"],
   "lang": "en",
   "icons": [
-    {
-      "src": "/logo.png",
-      "sizes": "180x180",
-      "type": "image/png",
-      "purpose": "any"
-    },
     {
       "src": "/logo.png",
       "sizes": "192x192",
@@ -42,23 +36,35 @@
     {
       "name": "Sales Point",
       "short_name": "Sales",
-      "description": "Make a new sale",
+      "description": "Make a new sale - Al-Farooq",
       "url": "/dashboard/sales",
-      "icons": [{ "src": "/logo.png", "sizes": "180x180" }]
+      "icons": [{ "src": "/logo.png", "sizes": "192x192" }]
     },
     {
       "name": "Products",
       "short_name": "Products",
       "description": "Manage products",
       "url": "/dashboard/products",
-      "icons": [{ "src": "/logo.png", "sizes": "180x180" }]
+      "icons": [{ "src": "/logo.png", "sizes": "192x192" }]
     },
     {
       "name": "Sales History",
       "short_name": "History",
       "description": "View sales history",
       "url": "/dashboard/sales/history",
-      "icons": [{ "src": "/logo.png", "sizes": "180x180" }]
+      "icons": [{ "src": "/logo.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Dashboard",
+      "short_name": "Dashboard",
+      "description": "Al-Farooq Dashboard",
+      "url": "/dashboard",
+      "icons": [{ "src": "/logo.png", "sizes": "192x192" }]
     }
-  ]
+  ],
+  "screenshots": [],
+  "launch_handler": {
+    "client_mode": ["navigate-existing", "auto"]
+  },
+  "handle_links": "preferred"
 }

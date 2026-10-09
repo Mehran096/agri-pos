@@ -1,50 +1,59 @@
 "use client";
 import { useEffect } from "react";
 
-const CURRENT_CACHE = "al-farooq-zarghi-v1-offline";
+const CURRENT_CACHE = "al-farooq-v4";
 
 export default function SWRegister() {
- 
   useEffect(() => {
-    if (typeof window === "undefined" ||!("serviceWorker" in navigator)) return;
+    if (typeof window === "undefined" || !("serviceWorker" in navigator)) return;
 
-    // 1. ONE TIME FIX: Delete ALL old caches except current
     const cleanOldCaches = async () => {
       try {
         const keys = await caches.keys();
         await Promise.all(
           keys
-            .filter((k) => k!== CURRENT_CACHE && (k.includes("agri-pwa") || k.includes("sona-shop-") || k.includes("al-farooq-")))
-            .map((k) => caches.delete(k))
+            .filter((k) => k !== CURRENT_CACHE)
+            .filter((k) => k.includes("agri-pwa") || k.includes("sona-shop-") || k.includes("al-farooq"))
+            .map((k) => {
+              console.log("Deleting old cache:", k);
+              return caches.delete(k);
+            })
         );
-      } catch {
-        // ignore
-      }
+      } catch {}
     };
     void cleanOldCaches();
 
-    // 2. Register after load - prevents render blocking
     const onLoad = () => {
       navigator.serviceWorker
         .register("/sw.js", { scope: "/" })
         .then((reg) => {
-          console.log("SW Al-Farooq v1 registered:", reg.scope);
+          console.log("SW Al-Farooq v4 registered:", reg.scope);
 
-          // 3. Auto-update when new SW found
+          // Auto-reload when new SW takes over - fixes S logo instantly
+          let refreshing = false;
+          navigator.serviceWorker.addEventListener("controllerchange", () => {
+            if (!refreshing) {
+              refreshing = true;
+              window.location.reload();
+            }
+          });
+
           reg.addEventListener("updatefound", () => {
             const newWorker = reg.installing;
             if (!newWorker) return;
             newWorker.addEventListener("statechange", () => {
               if (newWorker.state === "installed" && navigator.serviceWorker.controller) {
-                console.log("New Al-Farooq SW installed, will activate on next reload");
+                console.log("New Al-Farooq SW ready");
+                // Optional: show toast "Update available - reloading"
+                // newWorker.postMessage({ type: "SKIP_WAITING" });
               }
             });
           });
 
-          // 4. Force update check every hour (shop stays open long)
-          window.setInterval(() => {
-            void reg.update().catch(() => {});
-          }, 60 * 60 * 1000);
+          // Check for update every 1 hour + on focus (shop stays open)
+          const checkUpdate = () => reg.update().catch(() => {});
+          window.setInterval(checkUpdate, 60 * 60 * 1000);
+          window.addEventListener("focus", checkUpdate);
         })
         .catch((err) => {
           console.error("SW register failed:", err);
@@ -55,11 +64,8 @@ export default function SWRegister() {
       onLoad();
     } else {
       window.addEventListener("load", onLoad);
+      return () => window.removeEventListener("load", onLoad);
     }
-
-    return () => {
-      window.removeEventListener("load", onLoad);
-    };
   }, []);
 
   return null;
