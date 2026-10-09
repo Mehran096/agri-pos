@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState, useCallback, useSyncExternalStore } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { offlineDB } from "@/lib/offline-db";
 
 type Sale = {
@@ -89,9 +90,9 @@ export default function SalesHistoryPage() {
     try {
       const offlineAll = await offlineDB.sales.where("synced").equals(0).reverse().toArray();
       const offlineMapped: Sale[] = offlineAll
-    .filter((o) => isDateInFilter(o.createdAt, currentFilter))
-    .filter((o) =>!currentSearch || o.productName.toLowerCase().includes(currentSearch.toLowerCase()))
-    .map((o) => ({
+   .filter((o) => isDateInFilter(o.createdAt, currentFilter))
+   .filter((o) =>!currentSearch || o.productName.toLowerCase().includes(currentSearch.toLowerCase()))
+   .map((o) => ({
           _id: o.localId,
           productName: o.productName,
           quantity: o.quantity,
@@ -188,7 +189,7 @@ export default function SalesHistoryPage() {
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `sales-${filter}-${new Date().toISOString().split("T")[0]}.csv`;
+    a.download = `al-farooq-sales-${filter}-${new Date().toISOString().split("T")[0]}.csv`;
     a.click();
     window.URL.revokeObjectURL(url);
   };
@@ -202,15 +203,19 @@ export default function SalesHistoryPage() {
       )}
 
       <div className="flex flex-col gap-3 mb-4">
-        <Link href="/dashboard" className="text-[11px] sm:text-sm text-gray-500 hover:text-green-600">← Back</Link>
+        <Link href="/dashboard" className="text-[11px] sm:text-sm text-gray-500 hover:text-green-700">← Back to Dashboard</Link>
         <div className="flex flex-col sm:flex-row justify-between gap-2.5">
           <div>
-            <h1 className="text-[19px] sm:text-2xl font-bold">📜 Sales History - Flexible</h1>
+            <div className="flex items-center gap-2">
+              <Image src="/logo.png" alt="logo" width={32} height={32} className="w-8 h-8 rounded-full border" />
+              <h1 className="text-[17px] sm:text-xl font-bold">Al-Farooq - Sales History</h1>
+            </div>
             <p className="text-[11px] sm:text-[13px] text-gray-500 mt-1">{filter.toUpperCase()} • {pagination.totalCount + pendingCount} sales • Sell Rs.{total.toFixed(0)} • Buy Rs.{buyTotal.toFixed(0)} • Profit Rs.{profit.toFixed(0)} {pendingCount > 0 && `(${pendingCount} offline)`}</p>
+             
           </div>
-          <div className="flex gap-2">
+          <div className="flex gap-2 self-start sm:self-auto">
             <button onClick={exportCSV} className="bg-white border border-gray-200 px-3 sm:px-4 py-2 rounded-lg text-[11px] sm:text-[13px] font-medium">📥 CSV</button>
-            <Link href="/dashboard/sales" className="bg-green-600 text-white px-3.5 sm:px-5 py-2 rounded-lg text-[11px] sm:text-[13px] font-medium">+ New Sale</Link>
+            <Link href="/dashboard/sales" className="bg-green-700 text-white px-3.5 sm:px-5 py-2 rounded-lg text-[11px] sm:text-[13px] font-medium">+ New Sale</Link>
           </div>
         </div>
       </div>
@@ -218,10 +223,10 @@ export default function SalesHistoryPage() {
       <div className="bg-white p-2.5 sm:p-4 rounded-xl shadow-sm border border-gray-100 mb-4 flex flex-col gap-2.5">
         <div className="flex gap-1.5 overflow-x-auto pb-1">
           {FILTERS.map((f) => (
-            <button key={f} onClick={() => handleFilterChange(f)} className={`px-3 py-1.5 rounded-full text-[11px] sm:text-[13px] capitalize whitespace-nowrap ${filter === f? "bg-green-600 text-white" : "bg-gray-100"}`}>{f}</button>
+            <button key={f} onClick={() => handleFilterChange(f)} className={`px-3 py-1.5 rounded-full text-[11px] sm:text-[13px] capitalize whitespace-nowrap ${filter === f? "bg-green-700 text-white" : "bg-gray-100"}`}>{f}</button>
           ))}
         </div>
-        <input placeholder="🔍 Search product..." value={search} onChange={(e) => handleSearchChange(e.target.value)} className="border border-gray-200 p-2.5 rounded-lg w-full outline-none text-[12px] sm:text-[14px] focus:ring-2 focus:ring-green-500" />
+        <input placeholder="🔍 Search product..." value={search} onChange={(e) => handleSearchChange(e.target.value)} className="border border-gray-200 p-2.5 rounded-lg w-full outline-none text-[12px] sm:text-[14px] focus:ring-2 focus:ring-green-700" />
       </div>
 
       {loading && page === 1? (
@@ -241,7 +246,7 @@ export default function SalesHistoryPage() {
                 <div key={date} className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
                   <div className="bg-gray-50 px-3 sm:px-5 py-2.5 flex justify-between border-b border-gray-100">
                     <span className="font-semibold text-[11px] sm:text-[13px]">{date} • {daySales.length} sales</span>
-                    <span className="text-[11px] sm:text-[13px] font-bold"><span className="text-gray-500">Buy {dayBuy.toFixed(0)} → </span><span className="text-green-600">Rs.{dayTotal.toFixed(0)}</span> <span className="text-blue-600 ml-2">+{dayProfit.toFixed(0)}</span></span>
+                    <span className="text-[11px] sm:text-[13px] font-bold"><span className="text-gray-500">Buy {dayBuy.toFixed(0)} → </span><span className="text-green-700">Rs.{dayTotal.toFixed(0)}</span> <span className="text-blue-600 ml-2">+{dayProfit.toFixed(0)}</span></span>
                   </div>
                   {daySales.map((s) => {
                     const buy = s.total - s.profit;
@@ -253,7 +258,7 @@ export default function SalesHistoryPage() {
                         </p>
                         <p className="text-[10px] text-gray-400 mt-0.5">Buy Rs.{buy.toFixed(0)} (Rate {s.buyPrice}) • Sell Rs.{s.sellPrice} • Profit Rs.{s.profit.toFixed(0)} • {new Date(s.createdAt).toLocaleTimeString()} {s.isPartialSale? `• Partial ${s.qtyPerUnit}${s.subUnit}/${s.unit}` : ""}</p>
                       </div>
-                      <span className="font-bold text-[12px] sm:text-[13px] shrink-0 ml-2 text-right">Rs.{s.total.toFixed(0)}<br/><span className="text-[10px] text-gray-400 font-normal">Buy {buy.toFixed(0)}</span><br/><span className="text-[10px] text-green-600 font-normal">+{s.profit.toFixed(0)}</span></span>
+                      <span className="font-bold text-[12px] sm:text-[13px] shrink-0 ml-2 text-right">Rs.{s.total.toFixed(0)}<br/><span className="text-[10px] text-gray-400 font-normal">Buy {buy.toFixed(0)}</span><br/><span className="text-[10px] text-green-700 font-normal">+{s.profit.toFixed(0)}</span></span>
                     </div>
                   )})}
                 </div>
@@ -268,9 +273,9 @@ export default function SalesHistoryPage() {
         </div>
       )}
 
-      <div className="mt-5 bg-green-600 text-white p-3.5 sm:p-5 rounded-xl flex justify-between items-center">
+      <div className="mt-5 bg-green-700 text-white p-3.5 sm:p-5 rounded-xl flex justify-between items-center">
         <div>
-          <p className="font-medium text-[12px] sm:text-[14px]">Total {filter} Revenue</p>
+          <p className="font-medium text-[12px] sm:text-[14px]">Al-Farooq • Total {filter} Revenue</p>
           <p className="text-[11px] opacity-80">Buy Rs.{buyTotal.toFixed(0)} • Profit Rs.{profit.toFixed(0)}</p>
         </div>
         <span className="text-[18px] sm:text-2xl font-bold">Rs.{total.toFixed(0)}</span>

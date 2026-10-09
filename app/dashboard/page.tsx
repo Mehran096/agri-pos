@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState, useCallback, useSyncExternalStore } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { offlineDB } from "@/lib/offline-db";
 
 type Product = {
@@ -37,7 +38,7 @@ function fixProduct(p: Product): Product {
   const sell = p.sellPrice || p.price || 0;
   const buy = p.buyPrice && p.buyPrice > 0? p.buyPrice : Math.round(sell * 0.82);
   return {
- ...p,
+...p,
     buyPrice: buy,
     sellPrice: sell || buy,
     price: sell || buy,
@@ -158,21 +159,25 @@ export default function MainDashboard() {
     return s + ((p.sellPrice||p.price)-buy)*p.stock;
   },0);
 
-  if (loading) return <p className="p-8 text-center text-gray-400 text-[12px]">Loading Dashboard...</p>;
+  if (loading) return <p className="p-8 text-center text-gray-400 text-[12px]">Loading Al-Farooq Dashboard...</p>;
 
   return (
     <div className="p-3 sm:p-6 md:p-8 max-w-6xl mx-auto min-h-screen bg-gray-50">
-      {isOffline && <div className="mb-3 bg-amber-50 border border-amber-200 text-amber-800 text-[12px] p-2.5 rounded-xl text-center">📶 Offline • {pendingCount} pending • Flexible sizes active</div>}
+      {isOffline && <div className="mb-3 bg-amber-50 border border-amber-200 text-amber-800 text-[12px] p-2.5 rounded-xl text-center">📶 Offline • {pendingCount} pending • Al-Farooq Shop offline mode</div>}
       {pendingCount > 0 &&!isOffline && <div className="mb-3 bg-blue-50 border border-blue-200 text-blue-800 text-[12px] p-2.5 rounded-xl text-center">{pendingCount} offline pending • 20kg/40kg/50kg + 500ml/1L/1.5L/2L enabled</div>}
 
-      <h1 className="text-[19px] sm:text-2xl font-bold mb-1">🌾 Dashboard - Flexible Bags & Bottles</h1>
-      <p className="text-gray-400 mb-4 text-[11px]">{new Date().toLocaleDateString()} • {isOffline? "Offline" : "Online"} • Stock in decimal 9.80 bags supported</p>
+      <div className="flex items-center gap-2.5 mb-1">
+        <Image src="/logo.png" alt="logo" width={36} height={36} className="w-9 h-9 rounded-full border-2 border-green-700 shadow-sm" />
+        <h1 className="text-[18px] sm:text-2xl font-bold">Al-Farooq Zarghi Shop - الفاروق زرعی سٹور</h1>
+      </div>
+      <p className="text-[11px] text-green-700 font-bold mb-1">0333-9426374 | 0321-9801598 | 0345-9495414 • Shewa Swabi</p>
+      <p className="text-gray-400 mb-4 text-[11px]">{new Date().toLocaleDateString()} • {isOffline? "Offline" : "Online"} • Seeds, Pesticides, Fertilizers • Stock in decimal 9.80 supported</p>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 mb-5">
         <div className="bg-white p-3 sm:p-5 rounded-xl border">
           <p className="text-gray-400 text-[10px]">Today Sale (Sell)</p>
           <p className="text-[16px] font-bold mt-1">Rs. {reports.today.total.toFixed(0)}</p>
-          <p className="text-[10px] text-gray-500 mt-1">Buy Rs.{reports.today.buy.toFixed(0)} • Profit <span className="text-green-600 font-bold">Rs.{reports.today.profit.toFixed(0)}</span></p>
+          <p className="text-[10px] text-gray-500 mt-1">Buy Rs.{reports.today.buy.toFixed(0)} • Profit <span className="text-green-700 font-bold">Rs.{reports.today.profit.toFixed(0)}</span></p>
           <p className="text-[10px] text-gray-400 mt-1">{reports.today.count} sales • {reports.today.total>0? ((reports.today.profit/reports.today.total)*100).toFixed(1) : "0"}% margin</p>
         </div>
         <div className="bg-white p-3 sm:p-5 rounded-xl border">
@@ -184,21 +189,21 @@ export default function MainDashboard() {
         <div className="bg-white p-3 sm:p-5 rounded-xl border">
           <p className="text-gray-400 text-[10px]">Year Sale (Sell)</p>
           <p className="text-[16px] font-bold mt-1">Rs. {reports.year.total.toFixed(0)}</p>
-          <p className="text-[10px] text-gray-500 mt-1">Buy Rs.{reports.year.buy.toFixed(0)} • Profit <span className="text-green-600 font-bold">Rs.{reports.year.profit.toFixed(0)}</span></p>
+          <p className="text-[10px] text-gray-500 mt-1">Buy Rs.{reports.year.buy.toFixed(0)} • Profit <span className="text-green-700 font-bold">Rs.{reports.year.profit.toFixed(0)}</span></p>
           <p className="text-[9px] text-gray-400 mt-1">All Sell: Rs.{reports.all.total.toFixed(0)} • Buy Rs.{reports.all.buy.toFixed(0)}</p>
         </div>
         <div className="bg-white p-3 sm:p-5 rounded-xl border">
           <p className="text-gray-400 text-[10px]">Stock Value (Sell)</p>
           <p className="text-[16px] font-bold mt-1">Rs. {stockValue.toFixed(0)}</p>
-          <p className="text-[10px] text-gray-500 mt-1">Buy Rs.{stockBuyValue.toFixed(0)} • Profit <span className="text-green-600 font-bold">Rs.{stockProfitPotential.toFixed(0)}</span></p>
-          <p className="text-[9px] text-gray-400 mt-1">{products.length} products • {products.reduce((a,p)=>a+p.stock,0).toFixed(2)} bags/bottles total</p>
-          <Link href="/dashboard/products" className="text-[10px] text-green-600 mt-2 inline-block">Manage →</Link>
+          <p className="text-[10px] text-gray-500 mt-1">Buy Rs.{stockBuyValue.toFixed(0)} • Profit <span className="text-green-700 font-bold">Rs.{stockProfitPotential.toFixed(0)}</span></p>
+          <p className="text-[9px] text-gray-400 mt-1">{products.length} products • {products.reduce((a,p)=>a+p.stock,0).toFixed(2)} total stock</p>
+          <Link href="/dashboard/products" className="text-[10px] text-green-700 mt-2 inline-block">Manage →</Link>
         </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
         <div className="bg-white p-3.5 rounded-xl border">
-          <h2 className="font-bold mb-3 text-[13px]">⚠️ Low Stock &lt;1 bag/bottle {lowStock.length} | Warning &lt;5 {lowStockWarning.length}</h2>
+          <h2 className="font-bold mb-3 text-[13px]">⚠️ Low Stock &lt;1 {lowStock.length} | Warning &lt;5 {lowStockWarning.length}</h2>
           {[...lowStock,...lowStockWarning].slice(0,6).map(p=> {
             const buy = p.buyPrice>0? p.buyPrice : Math.round(p.sellPrice*0.82);
             const subStock = p.stock * (p.qtyPerUnit||1);
@@ -208,15 +213,15 @@ export default function MainDashboard() {
         </div>
         <div className="bg-white p-3.5 rounded-xl border">
           <h2 className="font-bold mb-3 text-[13px]">🕒 Today Sales - Buy → Sell • Profit Rs.{reports.today.profit.toFixed(0)}</h2>
-          {recentSales.length===0? <p className="text-[12px] text-gray-400 py-4 text-center">No sales today</p> : recentSales.map((s,i)=> {
+          {recentSales.length===0? <p className="text-[12px] text-gray-400 py-4 text-center">No sales today - Al-Farooq Shop</p> : recentSales.map((s,i)=> {
             const buy = s.total - s.profit;
             return (
             <div key={`${s.productName}-${i}`} className="flex justify-between py-2 border-b last:border-0 text-[12px]">
               <span className="flex-1 pr-2">{s.productName} <span className="text-gray-400 text-[10px]">{s.isPartialSale? `${s.quantityInSub}${s.subUnit} = ${s.quantity.toFixed(3)} ${s.unit}` : `x${s.quantity.toFixed(2)} ${s.unit||""}`}</span> {isOffline && s.localId?.startsWith("local_") && <span className="ml-1 text-[8px] bg-amber-200 px-1 rounded-full">OFFLINE</span>}</span>
-              <span className="text-right shrink-0"><span className="text-[10px] text-gray-400">Buy {buy.toFixed(0)} → </span>Rs.{s.total.toFixed(0)} <span className="text-[10px] text-green-600">+{s.profit.toFixed(0)}</span></span>
+              <span className="text-right shrink-0"><span className="text-[10px] text-gray-400">Buy {buy.toFixed(0)} → </span>Rs.{s.total.toFixed(0)} <span className="text-[10px] text-green-700">+{s.profit.toFixed(0)}</span></span>
             </div>
           )})}
-          <Link href="/dashboard/sales/history" className="text-[11px] text-green-600 mt-3 inline-block">View all history →</Link>
+          <Link href="/dashboard/sales/history" className="text-[11px] text-green-700 mt-3 inline-block">View all history →</Link>
         </div>
       </div>
     </div>
