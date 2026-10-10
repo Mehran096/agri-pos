@@ -1,6 +1,7 @@
 import dbConnect from "@/lib/mongodb";
 import Product from "@/models/Product";
 import Sale from "@/models/Sale";
+import Customer from "@/models/Customer";
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "../../auth/[...nextauth]/route";
@@ -10,19 +11,22 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 type Params = { params: Promise<{ id: string }> };
+type SaleStatus = "paid" | "pending" | "partial";
+
 type SaleUpdateBody = {
   quantity?: number;
   sellPrice?: number;
   price?: number;
   customerName?: string;
   paymentType?: string;
-  // NEW partial edit
   quantityInSub?: number;
   unit?: string;
   subUnit?: string;
   qtyPerUnit?: number;
   isPartialSale?: boolean;
   pricePerSub?: number;
+  status?: SaleStatus;
+  isCredit?: boolean;
 };
 
 function isValidObjectId(id: string): boolean {
@@ -31,22 +35,12 @@ function isValidObjectId(id: string): boolean {
 
 export async function GET(_req: NextRequest, { params }: Params) {
   const { id } = await params;
-  if (!isValidObjectId(id)) {
-    return NextResponse.json({ error: "Invalid ID" }, { status: 400 });
-  }
-
+  if (!isValidObjectId(id)) return NextResponse.json({ error: "Invalid ID" }, { status: 400 });
   try {
     const session = await getServerSession(authOptions);
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
+    if (!session?.user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     await dbConnect();
-    const sale = await Sale.findOne({ 
-      _id: id, 
-      userId: new Types.ObjectId(session.user.id) 
-    }).lean();
-    
+    const sale = await Sale.findOne({ _id: id, userId: new Types.ObjectId(session.user.id) }).lean();
     if (!sale) return NextResponse.json({ error: "Sale not found" }, { status: 404 });
     return NextResponse.json(sale);
   } catch {
@@ -56,77 +50,119 @@ export async function GET(_req: NextRequest, { params }: Params) {
 
 export async function PUT(req: NextRequest, { params }: Params) {
   const { id } = await params;
-  if (!isValidObjectId(id)) {
-    return NextResponse.json({ error: "Invalid ID" }, { status: 400 });
-  }
-
+  if (!isValidObjectId(id)) return NextResponse.json({ error: "Invalid ID" }, { status: 400 });
   try {
     const session = await getServerSession(authOptions);
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
+    if (!session?.user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     await dbConnect();
-    const body = await req.json() as SaleUpdateBody;
-    
+    const body = (await req.json()) as SaleUpdateBody;
     const userObjectId = new Types.ObjectId(session.user.id);
     const existingSale = await Sale.findOne({ _id: id, userId: userObjectId });
     if (!existingSale) return NextResponse.json({ error: "Sale not found" }, { status: 404 });
 
     const newQuantity = body.quantity ?? existingSale.quantity;
     const newSellPrice = body.sellPrice ?? body.price ?? existingSale.sellPrice;
-
-    if (newQuantity < 0.001) {
-      return NextResponse.json({ error: "Valid quantity required" }, { status: 400 });
-    }
+    const newTotal = Math.round(newQuantity * Number(newSellPrice));
+    const oldTotal = Math.round(existingSale.total);
+    if (newQuantity < 0.001) return NextResponse.json({ error: "Valid quantity required" }, { status: 400 });
 
     const diff = newQuantity - existingSale.quantity;
-
     if (diff > 0.0001) {
       const product = await Product.findOne({ _id: existingSale.productId, userId: userObjectId });
       if (!product) return NextResponse.json({ error: "Product not found" }, { status: 404 });
-      if (product.stock < diff - 0.0001) {
-        return NextResponse.json({ error: `Only ${product.stock.toFixed(2)} stock left` }, { status: 400 });
-      }
+      if (product.stock < diff - 0.0001) return NextResponse.json({ error: `Only ${product.stock.toFixed(2)} stock left` }, { status: 400 });
     }
-
     if (Math.abs(diff) > 0.0001) {
-      await Product.findOneAndUpdate(
-        { _id: existingSale.productId, userId: userObjectId },
-        { $inc: { stock: -diff }, $set: { lastSyncedAt: new Date() } }
-      );
+      await Product.findOneAndUpdate({ _id: existingSale.productId, userId: userObjectId }, { $inc: { stock: -diff }, $set: { lastSyncedAt: new Date() } });
     }
-
     const buyPrice = existingSale.buyPrice || 0;
     const originalPrice = existingSale.originalPrice || newSellPrice;
+    const oldCustomerName = existingSale.customerName;
+    const oldIsCredit = existingSale.isCredit || existingSale.status === "pending";
 
     existingSale.quantity = newQuantity;
     existingSale.sellPrice = Number(newSellPrice);
     existingSale.price = Number(newSellPrice);
-    existingSale.total = newQuantity * Number(newSellPrice);
-    existingSale.profit = (Number(newSellPrice) - buyPrice) * newQuantity;
-    existingSale.discount = (originalPrice - Number(newSellPrice)) * newQuantity;
+    existingSale.total = newTotal;
+    existingSale.profit = Math.round((Number(newSellPrice) - buyPrice) * newQuantity);
+    existingSale.discount = Math.round((originalPrice - Number(newSellPrice)) * newQuantity);
     existingSale.originalPrice = Number(originalPrice);
 
-    if (body.customerName) existingSale.customerName = body.customerName;
-    if (body.paymentType) existingSale.paymentType = body.paymentType;
-
-    // NEW: update partial fields if sent
+    if (body.customerName) existingSale.customerName = body.customerName.trim();
+    if (body.paymentType) {
+      const rawType = body.paymentType.toLowerCase();
+      const isCreditNow = rawType === "credit" || rawType === "udhar" || body.isCredit === true;
+      existingSale.paymentType = isCreditNow ? "credit" : rawType;
+      existingSale.isCredit = isCreditNow;
+      existingSale.status = isCreditNow ? "pending" : "paid";
+      existingSale.paidAmount = isCreditNow ? 0 : newTotal;
+      existingSale.pendingAmount = isCreditNow ? newTotal : 0;
+    } else if (body.status) {
+      existingSale.status = body.status;
+      existingSale.isCredit = body.status === "pending";
+      existingSale.paidAmount = body.status === "pending" ? 0 : newTotal;
+      existingSale.pendingAmount = body.status === "pending" ? newTotal : 0;
+    }
     if (body.unit) existingSale.unit = body.unit;
     if (body.subUnit) existingSale.subUnit = body.subUnit;
     if (body.qtyPerUnit !== undefined) existingSale.qtyPerUnit = Number(body.qtyPerUnit);
     if (body.quantityInSub !== undefined) existingSale.quantityInSub = Number(body.quantityInSub);
     if (body.isPartialSale !== undefined) existingSale.isPartialSale = Boolean(body.isPartialSale);
     if (body.pricePerSub !== undefined) existingSale.pricePerSub = Number(body.pricePerSub);
-
-    // auto recalc quantityInSub if qty changed and it's partial
-    if (body.quantity !== undefined && existingSale.isPartialSale && existingSale.qtyPerUnit) {
-      if (body.quantityInSub === undefined) {
-        existingSale.quantityInSub = newQuantity * existingSale.qtyPerUnit;
-      }
+    if (body.quantity !== undefined && existingSale.isPartialSale && existingSale.qtyPerUnit && body.quantityInSub === undefined) {
+      existingSale.quantityInSub = newQuantity * existingSale.qtyPerUnit;
     }
-
     await existingSale.save();
+
+    // FIXED: Khata update by saleId - no merging
+    try {
+      const newIsCredit = existingSale.isCredit || existingSale.status === "pending";
+      const newCustomerName = existingSale.customerName;
+
+      if (oldIsCredit && !newIsCredit) {
+        // Udhar -> Cash : delete exact Khata row
+        await Customer.deleteOne({ saleId: existingSale._id, userId: userObjectId });
+        // fallback for old data
+        await Customer.deleteOne({ name: oldCustomerName, userId: userObjectId, saleId: { $exists: false }, totalUdhar: { $lte: oldTotal + 0.5 } });
+      } else if (!oldIsCredit && newIsCredit) {
+        // Cash -> Udhar : create separate row
+        await Customer.create({
+          userId: userObjectId,
+          name: newCustomerName,
+          totalUdhar: newTotal,
+          totalBusiness: newTotal,
+          saleId: existingSale._id,
+          lastUdharDate: new Date(),
+          isPaid: false,
+          paidAmount: 0,
+        });
+      } else if (oldIsCredit && newIsCredit) {
+        // Udhar -> Udhar (edit quantity or name)
+        const existingCustomer = await Customer.findOne({ saleId: existingSale._id, userId: userObjectId });
+        if (existingCustomer) {
+          existingCustomer.name = newCustomerName;
+          existingCustomer.totalUdhar = newTotal;
+          existingCustomer.totalBusiness = newTotal;
+          existingCustomer.lastUdharDate = new Date();
+          await existingCustomer.save();
+        } else {
+          // Old doc without saleId - create new separate one
+          await Customer.create({
+            userId: userObjectId,
+            name: newCustomerName,
+            totalUdhar: newTotal,
+            totalBusiness: newTotal,
+            saleId: existingSale._id,
+            lastUdharDate: new Date(),
+            isPaid: false,
+            paidAmount: 0,
+          });
+          // cleanup old aggregated entry if possible
+          await Customer.updateOne({ name: oldCustomerName, userId: userObjectId, saleId: { $exists: false } }, { $inc: { totalUdhar: -oldTotal, totalBusiness: -oldTotal } });
+          await Customer.deleteOne({ name: oldCustomerName, userId: userObjectId, saleId: { $exists: false }, totalUdhar: { $lte: 0.5 } });
+        }
+      }
+    } catch {}
 
     return NextResponse.json(existingSale);
   } catch {
@@ -136,30 +172,53 @@ export async function PUT(req: NextRequest, { params }: Params) {
 
 export async function DELETE(_req: NextRequest, { params }: Params) {
   const { id } = await params;
-  if (!isValidObjectId(id)) {
-    return NextResponse.json({ error: "Invalid ID" }, { status: 400 });
-  }
-
   try {
     const session = await getServerSession(authOptions);
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
+    if (!session?.user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     await dbConnect();
     const userObjectId = new Types.ObjectId(session.user.id);
-    
-    const sale = await Sale.findOne({ _id: id, userId: userObjectId });
-    if (!sale) return NextResponse.json({ error: "Sale not found" }, { status: 404 });
+
+    type SaleDoc = Awaited<ReturnType<typeof Sale.findOne>>;
+    let saleDoc: SaleDoc = null;
+
+    if (isValidObjectId(id)) {
+      saleDoc = await Sale.findOne({ _id: id, userId: userObjectId });
+    }
+    if (!saleDoc) {
+      saleDoc = await Sale.findOne({ localId: id, userId: userObjectId });
+    }
+    if (!saleDoc) return NextResponse.json({ error: "Sale not found" }, { status: 404 });
 
     await Product.findOneAndUpdate(
-      { _id: sale.productId, userId: userObjectId },
-      { $inc: { stock: sale.quantity }, $set: { lastSyncedAt: new Date() } }
+      { _id: saleDoc.productId, userId: userObjectId },
+      { $inc: { stock: saleDoc.quantity }, $set: { lastSyncedAt: new Date() } }
     );
 
-    await Sale.deleteOne({ _id: id, userId: userObjectId });
-    return NextResponse.json({ message: "Sale deleted and stock restored" });
-  } catch {
+    if (saleDoc.isCredit || saleDoc.status === "pending" || saleDoc.paymentType === "credit") {
+      try {
+        // NEW: Delete exact Khata row by saleId - Faisal fix
+        const deleted = await Customer.deleteOne({ saleId: saleDoc._id, userId: userObjectId });
+        if (deleted.deletedCount === 0) {
+          // Fallback for old aggregated data without saleId
+          const amt = Math.round(saleDoc.pendingAmount || saleDoc.total);
+          await Customer.updateOne(
+            { name: saleDoc.customerName, userId: userObjectId, saleId: { $exists: false } },
+            { $inc: { totalUdhar: -amt, totalBusiness: -amt } }
+          );
+          await Customer.deleteOne({
+            name: saleDoc.customerName,
+            userId: userObjectId,
+            saleId: { $exists: false },
+            totalUdhar: { $lte: 0.5 },
+          });
+        }
+      } catch {}
+    }
+
+    await Sale.deleteOne({ _id: saleDoc._id, userId: userObjectId });
+    return NextResponse.json({ message: "Sale deleted, Khata row deleted by saleId" });
+  } catch (error) {
+    console.error("DELETE error:", error);
     return NextResponse.json({ error: "Failed to delete sale" }, { status: 500 });
   }
 }

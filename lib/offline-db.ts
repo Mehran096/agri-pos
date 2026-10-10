@@ -7,16 +7,13 @@ export interface OfflineProduct {
   price: number;
   buyPrice: number;
   sellPrice: number;
-  unit: string; // bag, bottle, liter, kg, ml, pack
-  stock: number; // decimal: 9.8 bags, 0.9 bottle
-
-  // NEW: Flexible size
-  qtyPerUnit?: number; // 20,40,50, 500,1000,1500
-  subUnit?: string; // kg, ml, liter, g
-  baseQtyInSub?: number; // e.g. 1500 for 1.5L
-  pricePerSub?: number; // Rs per kg/ml
-  totalStockInSub?: number; // e.g. 500kg
-
+  unit: string;
+  stock: number;
+  qtyPerUnit?: number;
+  subUnit?: string;
+  baseQtyInSub?: number;
+  pricePerSub?: number;
+  totalStockInSub?: number;
   userId: string;
   synced: number;
   createdAt?: string;
@@ -27,8 +24,7 @@ export interface OfflineSale {
   localId: string;
   productId: string;
   productName: string;
-
-  quantity: number; // in MAIN unit - can be 0.05 bag, 0.1 bottle
+  quantity: number;
   price: number;
   buyPrice?: number;
   sellPrice?: number;
@@ -41,21 +37,43 @@ export interface OfflineSale {
   createdAt: string;
   synced: number;
   offlineCreatedAt?: string;
-
-  // NEW: For partial sales
   unit?: string;
   subUnit?: string;
   qtyPerUnit?: number;
-  quantityInSub?: number; // e.g. 2 kg, 100 ml
+  quantityInSub?: number;
   isPartialSale?: boolean;
   pricePerSub?: number;
+  customerId?: string;
+  paidAmount?: number;
+  pendingAmount?: number;
+  status?: "paid" | "pending" | "partial";
+  isCredit?: boolean;
+  wusoolDate?: string;
+}
+
+export interface OfflineCustomer {
+  localId: string;
+  _id?: string;
+  saleId: string;
+  name: string;
+  phone?: string;
+  village?: string;
+  totalUdhar: number;
+  totalBusiness: number;
+  lastUdharDate?: string;
+  synced: number;
+  createdAt?: string;
+  // NEW - Wusool Done feature
+  isPaid?: boolean;
+  paidAmount?: number;
+  paidAt?: string;
 }
 
 export interface SyncQueueItem {
   id?: number;
-  type: 'sale' | 'product';
+  type: 'sale' | 'product' | 'customer';
   localId: string;
-  payload: OfflineSale | OfflineProduct;
+  payload: OfflineSale | OfflineProduct | OfflineCustomer;
   createdAt: Date;
   attempts: number;
 }
@@ -63,22 +81,21 @@ export interface SyncQueueItem {
 export class OfflineDB extends Dexie {
   products!: Table<OfflineProduct, string>;
   sales!: Table<OfflineSale, string>;
+  customers!: Table<OfflineCustomer, string>;
   syncQueue!: Table<SyncQueueItem, number>;
 
   constructor() {
-    super('SonaShopOfflineV7'); // ✅ bumped V6 -> V7 for migration
+    super('AlFarooqZarghiOfflineV8');
     this.version(1).stores({
       products: 'localId, _id, userId, synced, name',
       sales: 'localId, productId, userId, synced, createdAt',
       syncQueue: '++id, type, localId, createdAt',
     });
-    // V2 keeps same indexes - just schema expanded to allow decimal stock
     this.version(2).stores({
       products: 'localId, _id, userId, synced, name',
       sales: 'localId, productId, userId, synced, createdAt',
       syncQueue: '++id, type, localId, createdAt',
     }).upgrade(tx => {
-      // migrate old integer stock to decimal compatible
       return tx.table("products").toCollection().modify(p => {
         if (!p.qtyPerUnit) {
           if (p.unit === "bag") p.qtyPerUnit = 50;
@@ -89,6 +106,42 @@ export class OfflineDB extends Dexie {
           if (p.unit === "bag") p.subUnit = "kg";
           else if (p.unit === "bottle" || p.unit === "liter") p.subUnit = "ml";
           else p.subUnit = "";
+        }
+      });
+    });
+    this.version(3).stores({
+      products: 'localId, _id, userId, synced, name',
+      sales: 'localId, productId, userId, synced, createdAt, customerName, status, isCredit',
+      customers: 'localId, _id, name, totalUdhar, synced',
+      syncQueue: '++id, type, localId, createdAt',
+    });
+    this.version(4).stores({
+      products: 'localId, _id, userId, synced, name',
+      sales: 'localId, productId, userId, synced, createdAt, customerName, status, isCredit',
+      customers: 'localId, _id, saleId, name, totalUdhar, synced',
+      syncQueue: '++id, type, localId, createdAt',
+    }).upgrade(tx => {
+      return tx.table("customers").toCollection().modify(c => {
+        const cust = c as OfflineCustomer;
+        if (!cust.saleId) {
+          cust.saleId = cust.localId;
+        }
+      });
+    });
+    // V5 - WUSOOL DONE: keep paid customers, don't delete
+    this.version(5).stores({
+      products: 'localId, _id, userId, synced, name',
+      sales: 'localId, productId, userId, synced, createdAt, customerName, status, isCredit',
+      customers: 'localId, _id, saleId, name, totalUdhar, synced, isPaid',
+      syncQueue: '++id, type, localId, createdAt',
+    }).upgrade(tx => {
+      return tx.table("customers").toCollection().modify(c => {
+        const cust = c as OfflineCustomer;
+        if (cust.isPaid === undefined) {
+          cust.isPaid = false;
+        }
+        if (cust.paidAmount === undefined) {
+          cust.paidAmount = 0;
         }
       });
     });

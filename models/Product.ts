@@ -28,12 +28,12 @@ const ProductSchema = new Schema<IProduct>(
 
     unit: { 
       type: String, 
-      enum: ["bag", "bottle", "liter", "kg", "ml", "pack", "piece", "g", "box", "ton"], // ✅ bottle added
+      enum: ["bag", "bottle", "liter", "kg", "ml", "pack", "piece", "g", "box", "ton"],
       default: "bag", 
       trim: true 
     },
     
-    stock: { type: Number, required: true, default: 100, min: 0 }, // 9.8 bags allowed
+    stock: { type: Number, required: true, default: 100, min: 0 },
 
     qtyPerUnit: { 
       type: Number, 
@@ -47,12 +47,12 @@ const ProductSchema = new Schema<IProduct>(
     },
     subUnit: {
       type: String,
-      enum: ["kg", "g", "ml", "liter", ""],
+      enum: ["kg", "g", "ml", "liter", "piece", ""],
       default: function(this: IProduct) {
         if (this.unit === "bag") return "kg";
         if (this.unit === "bottle") return "ml";
         if (this.unit === "liter") return "ml";
-        return "kg";
+        return "";
       }
     },
     baseQtyInSub: { type: Number, default: 0 },

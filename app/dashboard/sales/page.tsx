@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState, useCallback, useSyncExternalStore } from "react";
-import { offlineDB, OfflineProduct, OfflineSale } from "@/lib/offline-db";
+import { offlineDB, OfflineProduct, OfflineSale, OfflineCustomer } from "@/lib/offline-db";
 import { getOfflineUser } from "@/lib/offline-auth";
 
 type Product = {
@@ -11,12 +11,12 @@ type Sale = {
   _id: string; productId: string; productName: string; quantity: number; quantityInSub?: number;
   unit?: string; subUnit?: string; isPartialSale?: boolean; price: number; buyPrice: number;
   sellPrice: number; profit: number; total: number; createdAt: string; localId?: string;
-  qtyPerUnit?: number;
+  qtyPerUnit?: number; customerName?: string; status?: string; paymentType?: string;
 };
 type FilterType = "today" | "yesterday" | "weekly" | "monthly" | "yearly" | "all";
 type Pagination = { page: number; totalPages: number; hasMore: boolean; totalCount: number };
 type ProductsResponse = Product[] | { products: Product[]; pagination: Pagination };
-type SalesApiResponse = { sales: Sale[]; total: number; profit: number; pagination: Pagination };
+type SalesApiResponse = { sales: Sale[]; total: number; profit: number; pendingTotal?: number; pagination: Pagination };
 
 const FILTERS: FilterType[] = ["today", "yesterday", "weekly", "monthly", "yearly", "all"];
 const PRODUCTS_PER_PAGE = 12;
@@ -44,23 +44,16 @@ function dedupeProducts(arr: Product[]): Product[] {
 }
 function toOfflineProduct(p: Product): OfflineProduct {
   return {
-    _id: p._id,
-    localId: p._id,
-    name: p.name,
-    price: p.sellPrice,
-    sellPrice: p.sellPrice,
-    buyPrice: p.buyPrice,
-    stock: p.stock,
-    unit: p.unit,
-    qtyPerUnit: p.qtyPerUnit,
-    subUnit: p.subUnit,
-  } as OfflineProduct;
+    _id: p._id, localId: p._id, name: p.name, price: p.sellPrice, sellPrice: p.sellPrice,
+    buyPrice: p.buyPrice, stock: p.stock, unit: p.unit, qtyPerUnit: p.qtyPerUnit, subUnit: p.subUnit,
+    synced: 1,
+  } as unknown as OfflineProduct;
 }
 
 export default function SalesPage() {
   const [sales, setSales] = useState<Sale[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
-  const [total, setTotal] = useState(0); const [profit, setProfit] = useState(0);
+  const [total, setTotal] = useState(0); const [profit, setProfit] = useState(0); const [pendingTotal, setPendingTotal] = useState(0);
   const [qtyMap, setQtyMap] = useState<Record<string, number>>({});
   const [subQtyMap, setSubQtyMap] = useState<Record<string, number>>({});
   const [modeMap, setModeMap] = useState<Record<string, "main" | "sub">>({});
@@ -76,9 +69,13 @@ export default function SalesPage() {
   const isOffline = mounted &&!isOnline; const [pendingCount, setPendingCount] = useState(0);
   const [syncing, setSyncing] = useState(false); const [deletingId, setDeletingId] = useState<string | null>(null);
   const [sellingId, setSellingId] = useState<string | null>(null);
-  useEffect(() => { 
+  const [customerName, setCustomerName] = useState("Walk-in");
+  const [paymentType, setPaymentType] = useState<"cash" | "credit">("cash");
+  const [customerSuggest, setCustomerSuggest] = useState<string[]>([]);
+
+  useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setMounted(true); 
+    setMounted(true);
   }, []);
 
   const getSellCalc = useCallback((p: Product) => {
@@ -109,13 +106,13 @@ export default function SalesPage() {
     setPage(1);
     if (typeof window!== "undefined" &&!window.navigator.onLine) {
       const offlineSales = await offlineDB.sales.where("synced").equals(0).reverse().toArray();
-      const mapped: Sale[] = offlineSales.map((o) => ({ _id: o.localId, productId: o.productId, productName: o.productName, quantity: o.quantity?? 1, quantityInSub: o.quantityInSub, unit: o.unit, subUnit: o.subUnit, isPartialSale: o.isPartialSale, price: o.sellPrice?? 0, buyPrice: o.buyPrice?? 0, sellPrice: o.sellPrice?? 0, profit: o.profit?? 0, total: o.total?? 0, createdAt: o.createdAt, localId: o.localId, qtyPerUnit: o.qtyPerUnit }));
-      setSales(mapped); setTotal(mapped.reduce((a, b) => a + b.total, 0)); setProfit(mapped.reduce((a, b) => a + b.profit, 0)); return;
+      const mapped: Sale[] = offlineSales.map((o) => ({ _id: o.localId, productId: o.productId, productName: o.productName, quantity: o.quantity?? 1, quantityInSub: o.quantityInSub, unit: o.unit, subUnit: o.subUnit, isPartialSale: o.isPartialSale, price: o.sellPrice?? 0, buyPrice: o.buyPrice?? 0, sellPrice: o.sellPrice?? 0, profit: o.profit?? 0, total: o.total?? 0, createdAt: o.createdAt, localId: o.localId, qtyPerUnit: o.qtyPerUnit, customerName: o.customerName, status: o.paymentType==="credit"?"pending":"paid", paymentType: o.paymentType }));
+      setSales(mapped); setTotal(mapped.reduce((a, b) => a + b.total, 0)); setProfit(mapped.reduce((a, b) => a + b.profit, 0)); setPendingTotal(mapped.filter(s=>s.status==="pending").reduce((a,b)=>a+b.total,0)); return;
     }
     try {
       const salesRes = await fetch(`/api/sales?filter=${filter}&page=1&limit=15`);
       const salesData = (await salesRes.json()) as SalesApiResponse;
-      setSales(salesData.sales); setTotal(salesData.total); setProfit(salesData.profit); setPagination(salesData.pagination);
+      setSales(salesData.sales); setTotal(salesData.total); setProfit(salesData.profit); setPendingTotal(salesData.pendingTotal??0); setPagination(salesData.pagination);
     } catch {}
   }, [filter]);
 
@@ -127,7 +124,11 @@ export default function SalesPage() {
       try {
         const res = await fetch("/api/sales", { method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ productId: s.productId, productName: s.productName, quantity: s.quantity, quantityInSub: s.quantityInSub, unit: s.unit, subUnit: s.subUnit, qtyPerUnit: s.qtyPerUnit, isPartialSale: s.isPartialSale, pricePerSub: s.pricePerSub, price: s.sellPrice, buyPrice: s.buyPrice, sellPrice: s.sellPrice, profit: s.profit, total: s.total, localId: s.localId, customerName: s.customerName, paymentType: s.paymentType, offlineCreatedAt: s.createdAt, soldBy: s.soldBy }) });
-        if (res.ok) { await offlineDB.sales.update(s.localId, { synced: 1 }); synced++; }
+        if (res.ok) {
+          await offlineDB.sales.update(s.localId, { synced: 1 });
+          await offlineDB.customers.where('saleId').equals(s.localId).modify({ synced: 1 });
+          synced++;
+        }
       } catch {}
     }
     setPendingCount((prev) => Math.max(0, prev - synced)); setSyncing(false); if (synced > 0) void refreshSalesOnly();
@@ -150,8 +151,8 @@ export default function SalesPage() {
         const searchLower = productSearch.toLowerCase();
         if (cached.length > 0 &&!cancelled) {
           const filteredCache = cached
-         .map((c: OfflineProduct) => fixProduct({ _id: c._id || c.localId, name: c.name, price: c.sellPrice?? c.price?? 0, buyPrice: c.buyPrice?? 0, sellPrice: c.sellPrice?? c.price?? 0, stock: c.stock, unit: c.unit, qtyPerUnit: c.qtyPerUnit, subUnit: c.subUnit } as Product))
-         .filter((p) =>!searchLower || p.name.toLowerCase().includes(searchLower));
+      .map((c: OfflineProduct) => fixProduct({ _id: c._id || c.localId, name: c.name, price: c.sellPrice?? c.price?? 0, buyPrice: c.buyPrice?? 0, sellPrice: c.sellPrice?? c.price?? 0, stock: c.stock, unit: c.unit, qtyPerUnit: c.qtyPerUnit, subUnit: c.subUnit } as Product))
+      .filter((p) =>!searchLower || p.name.toLowerCase().includes(searchLower));
           const dedupedCache = dedupeProducts(filteredCache);
           const pagedCache = dedupedCache.slice(0, productPage * PRODUCTS_PER_PAGE);
           setProducts(pagedCache);
@@ -177,17 +178,6 @@ export default function SalesPage() {
             setProductPagination({ page: productPage, totalPages: hasMore? productPage + 1 : productPage, hasMore, totalCount: hasMore? 999 : list.length });
           }
         }
-        if (productPage === 1 &&!productSearch && typeof window!== "undefined" && window.navigator.onLine) {
-          void (async () => {
-            try {
-              const allRes = await fetch(`/api/products?limit=200`);
-              const allData = (await allRes.json()) as ProductsResponse;
-              const allList: Product[] = Array.isArray(allData)? allData : allData.products;
-              const fixedAll = dedupeProducts(allList.map(fixProduct));
-              if (fixedAll.length > 0) { await offlineDB.products.bulkPut(fixedAll.map(toOfflineProduct)); }
-            } catch {}
-          })();
-        }
       } catch (err) { if ((err as Error).name!== "AbortError") console.error(err); } finally { if (!cancelled) setLoadingMoreProducts(false); }
     }; void loadProducts(); return () => { cancelled = true; controller.abort(); };
   }, [productSearch, productPage]);
@@ -198,82 +188,165 @@ export default function SalesPage() {
       if (page === 1) setLoading(true); else setLoadingMore(true);
       try {
         const offlineSales = await offlineDB.sales.where("synced").equals(0).reverse().toArray();
-        const offlineMapped: Sale[] = offlineSales.map((o) => ({ _id: o.localId, productId: o.productId, productName: o.productName, quantity: o.quantity?? 1, quantityInSub: o.quantityInSub, unit: o.unit, subUnit: o.subUnit, isPartialSale: o.isPartialSale, price: o.sellPrice?? 0, buyPrice: o.buyPrice?? 0, sellPrice: o.sellPrice?? 0, profit: o.profit?? 0, total: o.total?? 0, createdAt: o.createdAt, localId: o.localId, qtyPerUnit: o.qtyPerUnit }));
+        const offlineMapped: Sale[] = offlineSales.map((o) => ({ _id: o.localId, productId: o.productId, productName: o.productName, quantity: o.quantity?? 1, quantityInSub: o.quantityInSub, unit: o.unit, subUnit: o.subUnit, isPartialSale: o.isPartialSale, price: o.sellPrice?? 0, buyPrice: o.buyPrice?? 0, sellPrice: o.sellPrice?? 0, profit: o.profit?? 0, total: o.total?? 0, createdAt: o.createdAt, localId: o.localId, qtyPerUnit: o.qtyPerUnit, customerName: o.customerName, status: o.paymentType==="credit"?"pending":"paid", paymentType: o.paymentType }));
         if (typeof window!== "undefined" &&!window.navigator.onLine) {
-          setSales(offlineMapped); setTotal(offlineMapped.reduce((a, b) => a + b.total, 0)); setProfit(offlineMapped.reduce((a, b) => a + b.profit, 0));
+          setSales(offlineMapped); setTotal(offlineMapped.reduce((a, b) => a + b.total, 0)); setProfit(offlineMapped.reduce((a, b) => a + b.profit, 0)); setPendingTotal(offlineMapped.filter(s=>s.status==="pending").reduce((a,b)=>a+b.total,0));
           setPagination({ page: 1, totalPages: 1, hasMore: false, totalCount: offlineMapped.length }); return;
         }
         const salesRes = await fetch(`/api/sales?filter=${filter}&page=${page}&limit=15`, { signal: controller.signal });
         const salesData = (await salesRes.json()) as SalesApiResponse;
         if (page === 1) setSales([...offlineMapped,...salesData.sales]); else setSales((prev) => [...prev,...salesData.sales]);
-        setTotal(salesData.total + offlineMapped.reduce((a, b) => a + b.total, 0)); setProfit(salesData.profit + offlineMapped.reduce((a, b) => a + b.profit, 0)); setPagination(salesData.pagination);
+        setTotal(salesData.total + offlineMapped.reduce((a, b) => a + b.total, 0)); setProfit(salesData.profit + offlineMapped.reduce((a, b) => a + b.profit, 0)); setPendingTotal((salesData.pendingTotal??0)+offlineMapped.filter(s=>s.status==="pending").reduce((a,b)=>a+b.total,0)); setPagination(salesData.pagination);
       } catch (err) { if ((err as Error).name!== "AbortError") console.error(err); } finally { setLoading(false); setLoadingMore(false); }
     }; void fetchData(); return () => controller.abort();
   }, [filter, page]);
 
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (customerName.length < 2 || customerName === "Walk-in") { setCustomerSuggest([]); return; }
+    const t = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/customers?search=${encodeURIComponent(customerName)}`);
+        const data = await res.json();
+        const uniqueNames = [...new Set((data.customers || []).map((c: {name:string}) => c.name.trim()).filter(Boolean))] as string[];
+        setCustomerSuggest(uniqueNames.slice(0,5));
+      } catch {}
+    }, 300);
+    return () => clearTimeout(t);
+  }, [customerName]);
+
   const sell = async (p: Product) => {
     if (sellingId) return;
+    if (paymentType==="credit" && (!customerName || customerName.trim().toLowerCase()==="walk-in" || customerName.trim().length<2)) { window.alert("Enter customer name for Udhar"); return; }
     const calc = getSellCalc(p);
     if (calc.qtyMain < 0.001 && calc.qtySub < 0.001) { window.alert("Enter quantity"); return; }
     if (p.stock < calc.qtyMain - 0.0001) { window.alert(`Only ${p.stock.toFixed(2)} ${p.unit} left`); return; }
     const offlineUser = getOfflineUser(); const localId = generateLocalId(); const now = new Date().toISOString();
+    const finalCustomer = customerName.trim() || "Walk-in";
     const newSale: Sale = {
       _id: localId, productId: p._id, productName: p.name, quantity: calc.qtyMain, quantityInSub: calc.qtySub,
       unit: p.unit, subUnit: p.subUnit, isPartialSale: calc.mode === "sub", price: calc.sellPricePerMain,
-      buyPrice: p.buyPrice, sellPrice: calc.sellPricePerMain, profit: calc.profit, total: calc.total, createdAt: now, localId, qtyPerUnit: p.qtyPerUnit
+      buyPrice: p.buyPrice, sellPrice: calc.sellPricePerMain, profit: calc.profit, total: calc.total, createdAt: now, localId, qtyPerUnit: p.qtyPerUnit,
+      customerName: finalCustomer, status: paymentType==="credit"?"pending":"paid", paymentType
     };
     setSellingId(p._id);
     setProducts((prev) => prev.map((prod) => (prod._id === p._id? {...prod, stock: prod.stock - calc.qtyMain } : prod)));
     setSales((prev) => [newSale,...prev]);
     setTotal((t) => t + calc.total);
     setProfit((pr) => pr + calc.profit);
+    if (paymentType==="credit") setPendingTotal(pt=>pt+calc.total);
     setSubQtyMap((prev) => ({...prev, [p._id]: 0}));
     setTimeout(() => setSellingId(null), 400);
     const offlineSale: OfflineSale = {
       localId, productId: p._id, productName: p.name, quantity: calc.qtyMain, price: calc.sellPricePerMain, buyPrice: p.buyPrice, sellPrice: calc.sellPricePerMain,
-      profit: calc.profit, total: calc.total, soldBy: offlineUser?.name || "shop", customerName: "Walk-in", paymentType: "cash",
+      profit: calc.profit, total: calc.total, soldBy: offlineUser?.name || "shop", customerName: finalCustomer, paymentType,
       createdAt: now, offlineCreatedAt: now, synced: 0, userId: offlineUser?._id || "offline",
       unit: p.unit, subUnit: p.subUnit, qtyPerUnit: p.qtyPerUnit, quantityInSub: calc.qtySub, isPartialSale: calc.mode === "sub", pricePerSub: calc.pricePerSub,
     };
     void (async () => {
       try {
         await offlineDB.sales.put(offlineSale);
+        // FIXED: Offline Khata separate row per udhar with saleId
+        if (paymentType==="credit" && finalCustomer.toLowerCase()!=="walk-in") {
+          const cust: OfflineCustomer = {
+            localId: generateLocalId(),
+            saleId: localId,
+            name: finalCustomer,
+            totalUdhar: Math.round(calc.total),
+            totalBusiness: Math.round(calc.total),
+            lastUdharDate: now,
+            synced: 0,
+            createdAt: now,
+            isPaid: false,
+            paidAmount: 0,
+          };
+          await offlineDB.customers.put(cust);
+        }
         await offlineDB.products.where("_id").equals(p._id).or("localId").equals(p._id).modify((prod) => { prod.stock -= calc.qtyMain; });
         if (typeof window!== "undefined" && window.navigator.onLine) {
           const res = await fetch("/api/sales", { method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ productId: p._id, productName: p.name, quantity: calc.qtyMain, quantityInSub: calc.qtySub, unit: p.unit, subUnit: p.subUnit, qtyPerUnit: p.qtyPerUnit, isPartialSale: calc.mode === "sub", pricePerSub: calc.pricePerSub, price: calc.sellPricePerMain, buyPrice: p.buyPrice, sellPrice: calc.sellPricePerMain, profit: calc.profit, total: calc.total, localId }) });
-          if (res.ok) await offlineDB.sales.update(localId, { synced: 1 });
+            body: JSON.stringify({ productId: p._id, productName: p.name, quantity: calc.qtyMain, quantityInSub: calc.qtySub, unit: p.unit, subUnit: p.subUnit, qtyPerUnit: p.qtyPerUnit, isPartialSale: calc.mode === "sub", pricePerSub: calc.pricePerSub, price: calc.sellPricePerMain, buyPrice: p.buyPrice, sellPrice: calc.sellPricePerMain, profit: calc.profit, total: calc.total, localId, customerName: finalCustomer, paymentType, offlineCreatedAt: now }) });
+          if (res.ok) {
+            await offlineDB.sales.update(localId, { synced: 1 });
+            await offlineDB.customers.where('saleId').equals(localId).modify({ synced: 1 });
+          }
         } else setPendingCount((c) => c + 1);
       } catch { setPendingCount((c) => c + 1); }
     })();
   };
 
-  const handleDeleteSale = async (id: string) => {
-    if (!window.confirm("Delete sale and restore stock?")) return;
-    setDeletingId(id);
-    try {
-      const saleToDelete = sales.find((s) => s._id === id);
-      const qtyToRestore = saleToDelete?.quantity?? 0;
-      const productId = saleToDelete?.productId;
-      setSales((prev) => prev.filter((s) => s._id!== id));
-      if (saleToDelete) { setTotal((t) => t - saleToDelete.total); setProfit((pr) => pr - saleToDelete.profit); }
-      if (productId) setProducts((prev) => prev.map((p) => (p._id === productId? {...p, stock: p.stock + qtyToRestore } : p)));
-      if (id.startsWith("local_")) {
-        await offlineDB.sales.delete(id);
-        if (productId) await offlineDB.products.where("_id").equals(productId).or("localId").equals(productId).modify((prod) => { prod.stock += qtyToRestore; });
-        setPendingCount((c) => Math.max(0, c - 1));
-      } else {
-        const res = await fetch(`/api/sales/${id}`, { method: "DELETE" });
-        if (!res.ok) throw new Error("Delete failed");
-        if (productId) await offlineDB.products.where("_id").equals(productId).or("localId").equals(productId).modify((prod) => { prod.stock += qtyToRestore; });
+const handleDeleteSale = async (id: string) => {
+  if (!window.confirm("Delete sale and restore stock + Khata?")) return;
+  setDeletingId(id);
+  try {
+    const saleToDelete = sales.find((s) => s._id === id);
+    const qtyToRestore = saleToDelete?.quantity?? 0;
+    const productId = saleToDelete?.productId;
+
+    setSales((prev) => prev.filter((s) => s._id!== id));
+    if (saleToDelete) {
+      const amt = Math.round(saleToDelete.total);
+      const pr = Math.round(saleToDelete.profit);
+      setTotal((t) => Math.max(0, t - amt));
+      setProfit((prv) => Math.max(0, prv - pr));
+      if (saleToDelete.status === "pending") {
+        setPendingTotal((pt) => Math.max(0, pt - amt));
       }
-    } catch (e) {
-      window.alert((e as Error).message || "Delete failed");
-      void refreshSalesOnly();
-    } finally {
-      setDeletingId(null);
     }
-  };
+    if (productId) {
+      setProducts((prev) =>
+        prev.map((p) =>
+          p._id === productId? {...p, stock: p.stock + qtyToRestore } : p
+        )
+      );
+    }
+
+    if (id.startsWith("local_")) {
+      const rec = await offlineDB.sales.get(id);
+      await offlineDB.sales.delete(id);
+      // FIXED: delete exact Khata row by saleId
+      await offlineDB.customers.where('saleId').equals(id).delete();
+      if (productId) {
+        await offlineDB.products
+         .where("_id")
+         .equals(productId)
+         .or("localId")
+         .equals(productId)
+         .modify((prod) => {
+            prod.stock += qtyToRestore;
+          });
+      }
+      if (rec?.synced === 1) {
+        try {
+          await fetch(`/api/sales/${id}`, { method: "DELETE" });
+        } catch {}
+      } else {
+        setPendingCount((c) => Math.max(0, c - 1));
+      }
+    } else {
+      const res = await fetch(`/api/sales/${id}`, { method: "DELETE" });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => null);
+        throw new Error(errData?.error || "Delete failed");
+      }
+      if (productId) {
+        await offlineDB.products
+         .where("_id")
+         .equals(productId)
+         .or("localId")
+         .equals(productId)
+         .modify((prod) => {
+            prod.stock += qtyToRestore;
+          });
+      }
+    }
+  } catch (e) {
+    window.alert((e as Error).message || "Delete failed");
+    void refreshSalesOnly();
+  } finally {
+    setDeletingId(null);
+  }
+};
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -284,6 +357,23 @@ export default function SalesPage() {
             <div className="flex gap-1.5 shrink-0">
               <div className="bg-green-600 text-white px-2.5 sm:px-3.5 py-2 rounded-xl font-bold text-[11px] sm:text-[12px]">{filter.toUpperCase()}: Rs.{total.toFixed(0)}</div>
               <div className="bg-blue-600 text-white px-2.5 sm:px-3.5 py-2 rounded-xl font-bold text-[11px] sm:text-[12px]">+Rs.{profit.toFixed(0)}</div>
+              {pendingTotal>0 && <div className="bg-red-600 text-white px-2.5 sm:px-3.5 py-2 rounded-xl font-bold text-[11px] sm:text-[12px]">Udhar Rs.{pendingTotal.toFixed(0)}</div>}
+            </div>
+          </div>
+          <div className="bg-gray-50 border rounded-xl p-2.5 flex flex-col sm:flex-row gap-2">
+            <div className="flex-1 relative">
+              <input value={customerName} onChange={e=>setCustomerName(e.target.value)} placeholder="Customer name (Walk-in)" className="w-full p-2.5 rounded-xl border text-[13px] bg-white" />
+              {customerSuggest.length>0 && (
+                <div className="absolute z-30 bg-white border rounded-xl mt-1 w-full shadow">
+                  {customerSuggest.map((name, idx)=>(
+                    <button key={`${name}-${idx}`} onClick={()=>{setCustomerName(name); setCustomerSuggest([]); setPaymentType("credit");}} className="w-full text-left px-3 py-2 text-[12px] hover:bg-gray-50">{name}</button>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="flex bg-white border rounded-xl p-1 h-11">
+              <button onClick={()=>setPaymentType("cash")} className={`flex-1 px-5 rounded-xl text-[12px] font-bold ${paymentType==="cash"?"bg-green-600 text-white":"text-gray-600"}`}>Cash</button>
+              <button onClick={()=>setPaymentType("credit")} className={`flex-1 px-5 rounded-xl text-[12px] font-bold ${paymentType==="credit"?"bg-red-600 text-white":"text-gray-600"}`}>Udhar</button>
             </div>
           </div>
           {mounted && (isOffline || pendingCount > 0) && (
@@ -297,7 +387,7 @@ export default function SalesPage() {
 
       <div className="max-w-7xl mx-auto p-2 sm:p-4 lg:p-6">
         <div className="flex flex-col sm:flex-row gap-2 mb-3">
-          <h2 className="font-semibold text-[13px] flex-1 hidden sm:block">Quick Sell - Instant ⚡ {isOffline? "(Offline Products)" : ""}</h2>
+          <h2 className="font-semibold text-[13px] flex-1 hidden sm:block">Quick Sell - Instant ⚡ {isOffline? "(Offline Products)" : ""} {paymentType==="credit"? `→ ${customerName}`:""}</h2>
           <input placeholder="🔍 Search product..." value={productSearch} onChange={(e) => { setProductSearch(e.target.value); setProductPage(1); }} className="border p-3 sm:p-2.5 rounded-xl w-full sm:w-64 bg-white text-[14px] sm:text-[13px] h-11 sm:h-auto" />
         </div>
 
@@ -309,7 +399,7 @@ export default function SalesPage() {
                 const calc = getSellCalc(p); const outOfStock = p.stock <= 0.001; const isBag = p.unit === "bag"; const isBottle = p.unit === "bottle";
                 const mainQty = qtyMap[p._id] || 1; const subQty = subQtyMap[p._id] || 0; const isSelling = sellingId === p._id; const isSub = mode === "sub";
                 return (
-                  <div key={p._id} className={`bg-white border rounded-2xl sm:rounded-xl p-3 shadow-sm flex flex-col ${isSelling? "ring-2 ring-green-400" : ""}`}>
+                  <div key={p._id} className={`bg-white border rounded-2xl sm:rounded-xl p-3 shadow-sm flex flex-col ${isSelling? "ring-2 ring-green-400" : ""} ${paymentType==="credit"?"border-red-200":""}`}>
                     <div className="flex justify-between gap-2 items-start">
                       <p className="font-semibold text-[14px] sm:text-[13px] flex-1 leading-tight line-clamp-2">{p.name}</p>
                       <span className="text-[9px] bg-gray-100 px-2 py-1 rounded-full h-fit shrink-0">{isBag? `${qtyPerUnit}kg/bag` : isBottle? `${qtyPerUnit >= 1000? qtyPerUnit / 1000 + "L" : qtyPerUnit + "ml"}/btl` : `${qtyPerUnit}${subUnit}`}</span>
@@ -339,7 +429,7 @@ export default function SalesPage() {
                       </div>
                     </div>
                     <div className="bg-gray-50 border rounded-xl p-2.5 mt-2.5 flex justify-between text-[12px] sm:text-[10px] font-medium">
-                      <span>Bill {isSub? `${subQty}${subUnit}` : `x${mainQty}`}</span>
+                      <span>Bill {isSub? `${subQty}${subUnit}` : `x${mainQty}`} {paymentType==="credit"?`→ ${customerName}`:""}</span>
                       <span className="font-bold text-green-700">Rs.{calc.total.toFixed(0)} <span className="text-[10px]">+{calc.profit.toFixed(0)}</span></span>
                     </div>
                     <div className="flex gap-2 mt-3 items-center">
@@ -356,7 +446,7 @@ export default function SalesPage() {
                         </div>
                       )}
                       <input value={priceMap[p._id]?? (isSub? String(p.sellPrice / qtyPerUnit) : String(p.sellPrice))} onChange={(e) => setPriceMap({...priceMap, [p._id]: e.target.value.replace(/[^0-9.]/g, "")})} className="w-18 sm:w-16 border border-amber-300 bg-amber-50 rounded-xl p-2 text-[12px] sm:text-[11px] font-bold text-center h-11 sm:h-auto" placeholder={isSub? `Rs/${subUnit}` : "Price"} />
-                      <button onClick={() => sell(p)} disabled={outOfStock || isSelling} className={`flex-1 rounded-xl text-[13px] sm:text-[11px] h-11 sm:h-auto sm:py-2.5 font-bold ${outOfStock? "bg-gray-200 text-gray-500" : isSelling? "bg-green-300 text-white" : "bg-green-600 text-white"}`}>{isSelling? "..." : isSub? `Sell ${subQty || 0}` : "Sell"}</button>
+                      <button onClick={() => sell(p)} disabled={outOfStock || isSelling} className={`flex-1 rounded-xl text-[13px] sm:text-[11px] h-11 sm:h-auto sm:py-2.5 font-bold ${outOfStock? "bg-gray-200 text-gray-500" : isSelling? "bg-green-300 text-white" : paymentType==="credit"?"bg-red-600 text-white":"bg-green-600 text-white"}`}>{isSelling? "..." : paymentType==="credit"?"Udhar": isSub? `Sell ${subQty || 0}` : "Sell"}</button>
                     </div>
                     {isSub && subQty > 0 && (
                       <p className="text-[10px] text-blue-600 mt-1 text-center">
@@ -373,7 +463,7 @@ export default function SalesPage() {
         )}
 
         <div className="flex flex-col sm:flex-row sm:items-center gap-2 mb-3 mt-4">
-          <h2 className="font-bold text-[14px] capitalize flex-1 order-2 sm:order-1">{filter} - Rs.{total.toFixed(0)} | Profit Rs.{profit.toFixed(0)} {loading? "(...)" : ""}</h2>
+          <h2 className="font-bold text-[14px] capitalize flex-1 order-2 sm:order-1">{filter} - Rs.{total.toFixed(0)} | Profit Rs.{profit.toFixed(0)} | Udhar Rs.{pendingTotal.toFixed(0)} {loading? "(...)" : ""}</h2>
           <div className="flex gap-1.5 overflow-x-auto pb-2 sm:pb-1 order-1 sm:order-2 -mx-2 px-2 sm:mx-0 sm:px-0">{FILTERS.map((f) => (<button key={f} onClick={() => { setFilter(f); setPage(1); }} className={`px-4 sm:px-3 py-2 sm:py-1.5 rounded-full text-[12px] sm:text-[11px] capitalize whitespace-nowrap min-h-9 ${filter === f? "bg-green-600 text-white" : "bg-white border"}`}>{f}</button>))}</div>
         </div>
 
@@ -383,26 +473,20 @@ export default function SalesPage() {
               {sales.map((s) => {
                 const isPartial =!!s.isPartialSale &&!!s.quantityInSub;
                 const leftPrice = isPartial? s.total : s.sellPrice;
-                const actualBuy = isPartial? (s.buyPrice * (s.quantity || 0)) : s.buyPrice;
-                const qtyPerUnit = s.qtyPerUnit || (s.quantity && s.quantityInSub? s.quantityInSub / s.quantity : (s.subUnit === "ml"? 400 : 50));
+                const qtyPerUnit = s.qtyPerUnit || (s.quantity && s.quantityInSub? s.quantityInSub / s.quantity : 50);
                 const isDeleting = deletingId === s._id;
                 return (
-                  <div key={s._id} className={`p-3 border-b last:border-0 ${s._id.startsWith("local_")? "bg-amber-50/50" : ""} ${isDeleting? "opacity-60 bg-red-50" : ""}`}>
+                  <div key={s._id} className={`p-3 border-b last:border-0 ${s._id.startsWith("local_")? "bg-amber-50/50" : ""} ${s.status==="pending"?"bg-red-50/30":""} ${isDeleting? "opacity-60 bg-red-50" : ""}`}>
                     <div className="flex justify-between gap-3 items-start">
                       <div className="flex-1">
                         <p className="font-semibold text-[13px] leading-tight">
-                          {s.productName} {isPartial? `(${s.quantityInSub}${s.subUnit})` : `x${(s.quantity || 1).toFixed(1)}`} @Rs.{leftPrice.toFixed(0)}
+                          {s.productName} {isPartial? `(${s.quantityInSub}${s.subUnit})` : `x${(s.quantity || 1).toFixed(1)}`} @Rs.{leftPrice.toFixed(0)} {s.customerName && s.customerName!=="Walk-in"? <span className="bg-yellow-100 px-2 py-0.5 rounded-full text-[10px]">👤 {s.customerName}</span> : null} {s.status==="pending"? <span className="bg-red-600 text-white px-2 py-0.5 rounded-full text-[9px] ml-1">UDHAR</span>:null}
                         </p>
                         <p className="text-[11px] text-gray-400 mt-1">{mounted? new Date(s.createdAt).toLocaleString() : ""} {s._id.startsWith("local_") && <span className="bg-amber-200 px-1.5 py-0.5 rounded-full text-[9px] ml-1">OFFLINE</span>}</p>
-                        <p className="text-[10px] text-gray-500 mt-0.5">
-                          {isPartial? `Product: 1 ${s.unit || 'btl'} = ${qtyPerUnit.toFixed(0)}${s.subUnit} • ${s.quantityInSub}${s.subUnit} = ${(s.quantity || 0).toFixed(3)} ${s.unit} • Buy Rs.${actualBuy.toFixed(0)} → Sell Rs.${s.total.toFixed(0)}`
-                          : `Buy Rs.${s.buyPrice.toFixed(0)} → Sell Rs.${s.sellPrice.toFixed(0)} • Stock ${s.quantity?.toFixed(1)} ${s.unit || ''}`}
-                        </p>
                       </div>
-                      <div className="text-right shrink-0 min-w-[90px]">
+                      <div className="text-right shrink-0 min-w-22.5">
                         <div className="font-bold text-[14px]">Rs.{s.total.toFixed(0)}</div>
                         <div className="text-[12px] font-bold text-green-600 bg-green-50 px-2 py-0.5 rounded-full mt-1 inline-block">+{s.profit.toFixed(0)} profit</div>
-                        <div className="text-[10px] text-gray-400 mt-1">{isPartial? `${s.quantityInSub}${s.subUnit}` : `${s.quantity?.toFixed(1)} ${s.unit || ''}`}</div>
                       </div>
                     </div>
                     <div className="flex justify-end mt-2">

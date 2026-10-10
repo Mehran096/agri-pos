@@ -1,9 +1,9 @@
-import { offlineDB, OfflineSale } from './offline-db';
+import { offlineDB, OfflineSale, OfflineProduct, OfflineCustomer } from './offline-db';
 
 export interface OfflineSaleData {
   productId: string;
   productName: string;
-  quantity: number; // in main unit - can be 0.05 bag, 0.1 bottle
+  quantity: number;
   price: number;
   buyPrice?: number;
   sellPrice?: number;
@@ -12,15 +12,20 @@ export interface OfflineSaleData {
   userId: string;
   soldBy?: string;
   customerName?: string;
+  customerPhone?: string;
+  customerVillage?: string;
   paymentType?: string;
-
-  // NEW: flexible
-  unit?: string; // bag, bottle, kg, ml
-  subUnit?: string; // kg, ml, liter
-  qtyPerUnit?: number; // 20,40,50,500,1000,1500
-  quantityInSub?: number; // 2kg, 100ml
+  unit?: string;
+  subUnit?: string;
+  qtyPerUnit?: number;
+  quantityInSub?: number;
   isPartialSale?: boolean;
   pricePerSub?: number;
+  customerId?: string;
+  paidAmount?: number;
+  pendingAmount?: number;
+  status?: "paid" | "pending" | "partial";
+  isCredit?: boolean;
 }
 
 type SyncManager = { register: (tag: string) => Promise<void> };
@@ -41,10 +46,12 @@ export async function saveSaleOffline(saleData: OfflineSaleData): Promise<string
   const buy = saleData.buyPrice ?? 0;
   const sell = saleData.sellPrice ?? saleData.price;
   const profitPerUnit = sell - buy;
-
-  // quantity is already in main unit (0.05 bag for 2kg)
   const qtyMain = saleData.quantity;
-  const qtySub = saleData.quantityInSub || 0;
+  const qtySub = saleData.quantityInSub ?? 0;
+  const totalRounded = Math.round(saleData.total);
+
+  const isCredit = saleData.paymentType === "credit" || saleData.paymentType === "udhar" || saleData.isCredit === true;
+  const status = isCredit ? "pending" : "paid";
 
   const newSale: OfflineSale = {
     localId,
@@ -54,36 +61,69 @@ export async function saveSaleOffline(saleData: OfflineSaleData): Promise<string
     price: sell,
     buyPrice: buy,
     sellPrice: sell,
-    profit: saleData.profit ?? profitPerUnit * qtyMain,
-    total: saleData.total,
-    soldBy: saleData.soldBy || 'shop',
+    profit: saleData.profit ?? Math.round(profitPerUnit * qtyMain),
+    total: totalRounded,
+    soldBy: saleData.soldBy || 'Al-Farooq',
     customerName: saleData.customerName || 'Walk-in',
-    paymentType: saleData.paymentType || 'cash',
+    paymentType: isCredit ? "credit" : (saleData.paymentType || 'cash'),
     userId: saleData.userId,
     createdAt: now,
     offlineCreatedAt: now,
     synced: 0,
-
-    // NEW fields saved offline
     unit: saleData.unit || "bag",
     subUnit: saleData.subUnit || "",
     qtyPerUnit: saleData.qtyPerUnit || 1,
     quantityInSub: qtySub,
-    isPartialSale: saleData.isPartialSale || qtySub>0,
+    isPartialSale: saleData.isPartialSale || qtySub > 0,
     pricePerSub: saleData.pricePerSub || 0,
+    customerId: saleData.customerId,
+    paidAmount: isCredit ? 0 : totalRounded,
+    pendingAmount: isCredit ? totalRounded : 0,
+    status: status,
+    isCredit: isCredit,
   };
 
   await offlineDB.sales.put(newSale);
+
+  // Separate row per udhar - no merging by name
+  if (isCredit && saleData.customerName && saleData.customerName.trim() !== "Walk-in") {
+    try {
+      const trimmedName = saleData.customerName.trim();
+      const cust: OfflineCustomer = {
+        localId: genLocalId(),
+        saleId: localId,
+        name: trimmedName,
+        phone: saleData.customerPhone || "",
+        village: saleData.customerVillage || "",
+        totalUdhar: totalRounded,
+        totalBusiness: totalRounded,
+        lastUdharDate: now,
+        synced: 0,
+        createdAt: now,
+        isPaid: false,
+        paidAmount: 0,
+      };
+      await offlineDB.customers.put(cust);
+    } catch {
+      // ignore
+    }
+  }
   
   try {
-    // deduct decimal stock: 0.05 bag, 0.1 bottle
     const prod = await offlineDB.products.get(saleData.productId);
     if (prod) {
-      await offlineDB.products.update(saleData.productId, { stock: prod.stock - qtyMain });
-    } else {
-      await offlineDB.products.where('_id').equals(saleData.productId).or("localId").equals(saleData.productId).modify((p) => {
-        p.stock = (p.stock || 0) - qtyMain;
+      await offlineDB.products.update(saleData.productId, { 
+        stock: prod.stock - qtyMain,
+        synced: 0,
       });
+    } else {
+      await offlineDB.products
+        .where('_id').equals(saleData.productId)
+        .or("localId").equals(saleData.productId)
+        .modify((p: OfflineProduct) => {
+          p.stock = (p.stock || 0) - qtyMain;
+          p.synced = 0;
+        });
     }
   } catch {
     // product not in cache
@@ -101,6 +141,32 @@ export async function saveSaleOffline(saleData: OfflineSaleData): Promise<string
   return localId;
 }
 
+// NEW: Offline wusool - mark as paid, don't delete
+export async function wusoolOffline(customerLocalId: string, amount: number): Promise<boolean> {
+  const customer = await offlineDB.customers.get(customerLocalId);
+  if (!customer) return false;
+  
+  const paid = Math.round(amount);
+  const newUdhar = Math.round(customer.totalUdhar - paid);
+  const now = new Date().toISOString();
+
+  if (newUdhar <= 0) {
+    await offlineDB.customers.update(customerLocalId, {
+      totalUdhar: 0,
+      isPaid: true,
+      paidAmount: customer.totalBusiness,
+      paidAt: now,
+      synced: 0,
+    });
+  } else {
+    await offlineDB.customers.update(customerLocalId, {
+      totalUdhar: newUdhar,
+      synced: 0,
+    });
+  }
+  return true;
+}
+
 export async function syncOfflineSales(): Promise<{ synced: number; failed: number }> {
   if (typeof window === 'undefined' || !navigator.onLine) return { synced: 0, failed: 0 };
   
@@ -116,8 +182,8 @@ export async function syncOfflineSales(): Promise<{ synced: number; failed: numb
         body: JSON.stringify({
           productId: sale.productId,
           productName: sale.productName,
-          quantity: sale.quantity, // 0.05 bag
-          quantityInSub: sale.quantityInSub, // 2 kg
+          quantity: sale.quantity,
+          quantityInSub: sale.quantityInSub,
           unit: sale.unit,
           subUnit: sale.subUnit,
           qtyPerUnit: sale.qtyPerUnit,
@@ -131,6 +197,11 @@ export async function syncOfflineSales(): Promise<{ synced: number; failed: numb
           localId: sale.localId,
           customerName: sale.customerName,
           paymentType: sale.paymentType,
+          customerId: sale.customerId,
+          paidAmount: sale.paidAmount,
+          pendingAmount: sale.pendingAmount,
+          status: sale.status,
+          isCredit: sale.isCredit,
           offlineCreatedAt: sale.createdAt,
           soldBy: sale.soldBy,
         }),
@@ -138,6 +209,7 @@ export async function syncOfflineSales(): Promise<{ synced: number; failed: numb
       
       if (res.ok) {
         await offlineDB.sales.update(sale.localId, { synced: 1 });
+        await offlineDB.customers.where('saleId').equals(sale.localId).modify({ synced: 1 });
         synced++;
       } else {
         failed++;
@@ -146,6 +218,24 @@ export async function syncOfflineSales(): Promise<{ synced: number; failed: numb
       failed++;
     }
   }
+  
+  // Sync wusool done offline customers
+  try {
+    const unsyncedCustomers = await offlineDB.customers.where('synced').equals(0).toArray();
+    for (const c of unsyncedCustomers) {
+      if (c.isPaid) {
+        // Try to sync paid status via wusool API
+        try {
+          await fetch('/api/khata/wusool', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ customerName: c.name, amount: c.totalBusiness }),
+          });
+          await offlineDB.customers.update(c.localId, { synced: 1 });
+        } catch {}
+      }
+    }
+  } catch {}
   
   return { synced, failed };
 }
