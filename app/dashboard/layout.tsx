@@ -74,7 +74,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             <div><h2 className="font-bold text-[14px] leading-tight">Al-Farooq Zarghi Shop</h2><p className="text-[10px] text-green-200 -mt-0.5">الفاروق زرعی سٹور</p></div>
             {hasMounted && isOffline && <span className="text-[9px] bg-amber-500 px-1.5 py-0.5 rounded-full ml-1" suppressHydrationWarning>OFFLINE</span>}
           </div>
-          <p className="text-[10px] text-green-100/70 pl-1">0333-9426374 • Shewa</p>
+          <p className="text-[10px] text-green-100/70 pl-1">0345-9495414 • Shewa</p>
         </div>
 
         {hasMounted && pendingCount > 0 && (

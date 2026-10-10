@@ -82,7 +82,7 @@ export default function HomePage() {
           </h1>
           <p className="text-gray-500 text-[12px] sm:text-[15px] mt-2 font-medium">الفاروق زرعی ادویات اینڈ بیج سٹور</p>
           <p className="text-gray-400 text-[11px] sm:text-[13px] mt-1">Fast billing • Stock tracking • Buy/Sell/Profit • Offline-ready</p>
-          <p className="text-green-700 text-[11px] mt-2 font-bold">0333-9426374 | 0321-9801598 | 0345-9495414</p>
+          <p className="text-green-700 text-[11px] mt-2 font-bold">0321-9801598 | 0345-9495414</p>
 
           {!isInstalled && (
             <div className="mt-4 bg-green-700 text-white p-3 rounded-xl flex justify-between items-center text-left max-w-sm mx-auto">
