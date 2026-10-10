@@ -163,7 +163,7 @@ export default function MainDashboard() {
           <p className="text-[10px] text-gray-500 mt-1">Buy Rs.{reports.month.buy.toFixed(0)} • Profit <span className="text-blue-600 font-bold">Rs.{reports.month.profit.toFixed(0)}</span></p>
           <p className="text-[10px] text-gray-400 mt-1">{reports.month.count} sales</p>
         </div>
-        <div className="bg-red-50 border-red-200 bg-white p-3 sm:p-5 rounded-xl border">
+        <div className="bg-red-50 border-red-200 p-3 sm:p-5 rounded-xl border">
           <p className="text-red-500 text-[10px] font-bold">Total Udhar - Khata</p>
           <p className="text-[16px] font-bold mt-1 text-red-600">Rs. {totalUdhar.toLocaleString()}</p>
           <p className="text-[10px] text-gray-500 mt-1">{udharCustomers} pending {paidCount? `| ${paidCount} done` : ""}</p>
