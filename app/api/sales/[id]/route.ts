@@ -33,6 +33,40 @@ function isValidObjectId(id: string): boolean {
   return Types.ObjectId.isValid(id);
 }
 
+function normalizeName(name: string | undefined): string {
+  return (name || "Walk-in").trim() || "Walk-in";
+}
+
+async function upsertKhataGrouped(
+  userId: Types.ObjectId,
+  name: string,
+  amount: number,
+  saleId: Types.ObjectId
+) {
+  const safeName = normalizeName(name);
+  const normalized = safeName.toLowerCase();
+  return Customer.findOneAndUpdate(
+    { userId, normalizedName: normalized, isPaid: false },
+    {
+      $setOnInsert: {
+        name: safeName,
+        normalizedName: normalized,
+        userId,
+        isPaid: false,
+        paidAmount: 0,
+      },
+      $inc: {
+        totalUdhar: Math.round(amount),
+        totalBusiness: Math.round(amount),
+        billsCount: 1,
+      },
+      $set: { lastUdharDate: new Date() },
+      $addToSet: { saleIds: saleId, idsGrouped: saleId },
+    },
+    { upsert: true, new: true }
+  );
+}
+
 export async function GET(_req: NextRequest, { params }: Params) {
   const { id } = await params;
   if (!isValidObjectId(id)) return NextResponse.json({ error: "Invalid ID" }, { status: 400 });
@@ -75,9 +109,11 @@ export async function PUT(req: NextRequest, { params }: Params) {
     if (Math.abs(diff) > 0.0001) {
       await Product.findOneAndUpdate({ _id: existingSale.productId, userId: userObjectId }, { $inc: { stock: -diff }, $set: { lastSyncedAt: new Date() } });
     }
+
     const buyPrice = existingSale.buyPrice || 0;
     const originalPrice = existingSale.originalPrice || newSellPrice;
-    const oldCustomerName = existingSale.customerName;
+    const oldCustomerName = normalizeName(existingSale.customerName);
+    const oldNormalized = oldCustomerName.toLowerCase();
     const oldIsCredit = existingSale.isCredit || existingSale.status === "pending";
 
     existingSale.quantity = newQuantity;
@@ -114,55 +150,44 @@ export async function PUT(req: NextRequest, { params }: Params) {
     }
     await existingSale.save();
 
-    // FIXED: Khata update by saleId - no merging
     try {
       const newIsCredit = existingSale.isCredit || existingSale.status === "pending";
-      const newCustomerName = existingSale.customerName;
+      const newCustomerName = normalizeName(existingSale.customerName);
+      const newNormalized = newCustomerName.toLowerCase();
+      const amountDiff = newTotal - oldTotal;
 
       if (oldIsCredit && !newIsCredit) {
-        // Udhar -> Cash : delete exact Khata row
-        await Customer.deleteOne({ saleId: existingSale._id, userId: userObjectId });
-        // fallback for old data
-        await Customer.deleteOne({ name: oldCustomerName, userId: userObjectId, saleId: { $exists: false }, totalUdhar: { $lte: oldTotal + 0.5 } });
+        await Customer.findOneAndUpdate(
+          { userId: userObjectId, saleIds: existingSale._id, isPaid: false },
+          { 
+            $inc: { totalUdhar: -oldTotal, totalBusiness: -oldTotal, billsCount: -1 },
+            $pull: { saleIds: existingSale._id, idsGrouped: existingSale._id }
+          }
+        );
+        await Customer.deleteOne({ userId: userObjectId, isPaid: false, billsCount: { $lte: 0 } });
       } else if (!oldIsCredit && newIsCredit) {
-        // Cash -> Udhar : create separate row
-        await Customer.create({
-          userId: userObjectId,
-          name: newCustomerName,
-          totalUdhar: newTotal,
-          totalBusiness: newTotal,
-          saleId: existingSale._id,
-          lastUdharDate: new Date(),
-          isPaid: false,
-          paidAmount: 0,
-        });
+        await upsertKhataGrouped(userObjectId, newCustomerName, newTotal, existingSale._id as Types.ObjectId);
       } else if (oldIsCredit && newIsCredit) {
-        // Udhar -> Udhar (edit quantity or name)
-        const existingCustomer = await Customer.findOne({ saleId: existingSale._id, userId: userObjectId });
-        if (existingCustomer) {
-          existingCustomer.name = newCustomerName;
-          existingCustomer.totalUdhar = newTotal;
-          existingCustomer.totalBusiness = newTotal;
-          existingCustomer.lastUdharDate = new Date();
-          await existingCustomer.save();
+        if (oldNormalized !== newNormalized) {
+          await Customer.findOneAndUpdate(
+            { userId: userObjectId, normalizedName: oldNormalized, isPaid: false },
+            { 
+              $inc: { totalUdhar: -oldTotal, totalBusiness: -oldTotal, billsCount: -1 },
+              $pull: { saleIds: existingSale._id, idsGrouped: existingSale._id }
+            }
+          );
+          await Customer.deleteOne({ userId: userObjectId, normalizedName: oldNormalized, isPaid: false, billsCount: { $lte: 0 } });
+          await upsertKhataGrouped(userObjectId, newCustomerName, newTotal, existingSale._id as Types.ObjectId);
         } else {
-          // Old doc without saleId - create new separate one
-          await Customer.create({
-            userId: userObjectId,
-            name: newCustomerName,
-            totalUdhar: newTotal,
-            totalBusiness: newTotal,
-            saleId: existingSale._id,
-            lastUdharDate: new Date(),
-            isPaid: false,
-            paidAmount: 0,
-          });
-          // cleanup old aggregated entry if possible
-          await Customer.updateOne({ name: oldCustomerName, userId: userObjectId, saleId: { $exists: false } }, { $inc: { totalUdhar: -oldTotal, totalBusiness: -oldTotal } });
-          await Customer.deleteOne({ name: oldCustomerName, userId: userObjectId, saleId: { $exists: false }, totalUdhar: { $lte: 0.5 } });
+          if (amountDiff !== 0) {
+            await Customer.findOneAndUpdate(
+              { userId: userObjectId, normalizedName: newNormalized, saleIds: existingSale._id, isPaid: false },
+              { $inc: { totalUdhar: amountDiff, totalBusiness: amountDiff }, $set: { lastUdharDate: new Date() } }
+            );
+          }
         }
       }
-    } catch {}
+    } catch (e) { console.error("Khata PUT grouping error", e); }
 
     return NextResponse.json(existingSale);
   } catch {
@@ -178,9 +203,7 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
     await dbConnect();
     const userObjectId = new Types.ObjectId(session.user.id);
 
-    type SaleDoc = Awaited<ReturnType<typeof Sale.findOne>>;
-    let saleDoc: SaleDoc = null;
-
+    let saleDoc = null;
     if (isValidObjectId(id)) {
       saleDoc = await Sale.findOne({ _id: id, userId: userObjectId });
     }
@@ -196,27 +219,31 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
 
     if (saleDoc.isCredit || saleDoc.status === "pending" || saleDoc.paymentType === "credit") {
       try {
-        // NEW: Delete exact Khata row by saleId - Faisal fix
-        const deleted = await Customer.deleteOne({ saleId: saleDoc._id, userId: userObjectId });
-        if (deleted.deletedCount === 0) {
-          // Fallback for old aggregated data without saleId
+        const custName = normalizeName(saleDoc.customerName);
+        const normalizedDel = custName.toLowerCase();
+        const res = await Customer.findOneAndUpdate(
+          { userId: userObjectId, saleIds: saleDoc._id, isPaid: false },
+          {
+            $inc: { totalUdhar: -Math.round(saleDoc.total), totalBusiness: -Math.round(saleDoc.total), billsCount: -1 },
+            $pull: { saleIds: saleDoc._id, idsGrouped: saleDoc._id }
+          },
+          { new: true }
+        );
+        if (res) {
+          await Customer.deleteOne({ _id: res._id, billsCount: { $lte: 0 } });
+        } else {
           const amt = Math.round(saleDoc.pendingAmount || saleDoc.total);
           await Customer.updateOne(
-            { name: saleDoc.customerName, userId: userObjectId, saleId: { $exists: false } },
-            { $inc: { totalUdhar: -amt, totalBusiness: -amt } }
+            { userId: userObjectId, normalizedName: normalizedDel, isPaid: false },
+            { $inc: { totalUdhar: -amt, totalBusiness: -amt, billsCount: -1 } }
           );
-          await Customer.deleteOne({
-            name: saleDoc.customerName,
-            userId: userObjectId,
-            saleId: { $exists: false },
-            totalUdhar: { $lte: 0.5 },
-          });
+          await Customer.deleteOne({ userId: userObjectId, normalizedName: normalizedDel, isPaid: false, totalUdhar: { $lte: 0.5 } });
         }
-      } catch {}
+      } catch (e) { console.error("Khata DELETE grouping error", e); }
     }
 
     await Sale.deleteOne({ _id: saleDoc._id, userId: userObjectId });
-    return NextResponse.json({ message: "Sale deleted, Khata row deleted by saleId" });
+    return NextResponse.json({ message: "Sale deleted, Khata grouped updated" });
   } catch (error) {
     console.error("DELETE error:", error);
     return NextResponse.json({ error: "Failed to delete sale" }, { status: 500 });

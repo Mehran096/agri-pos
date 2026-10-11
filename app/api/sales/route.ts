@@ -102,6 +102,40 @@ export async function GET(req: NextRequest) {
   }
 }
 
+// GROUPING HELPER - permanent fix for Arshad duplicates
+async function upsertKhataGrouped(
+  userId: Types.ObjectId,
+  name: string,
+  amount: number,
+  saleId: Types.ObjectId,
+  phone = "",
+  village = ""
+) {
+  const normalized = name.trim().toLowerCase();
+  return Customer.findOneAndUpdate(
+    { userId, normalizedName: normalized, isPaid: false },
+    {
+      $setOnInsert: {
+        name: name.trim(),
+        normalizedName: normalized,
+        userId,
+        phone,
+        village,
+        isPaid: false,
+        paidAmount: 0,
+      },
+      $inc: {
+        totalUdhar: Math.round(amount),
+        totalBusiness: Math.round(amount),
+        billsCount: 1,
+      },
+      $set: { lastUdharDate: new Date() },
+      $addToSet: { saleIds: saleId, idsGrouped: saleId },
+    },
+    { upsert: true, new: true }
+  );
+}
+
 export async function POST(req: NextRequest) {
   try {
     const session = await getServerSession(authOptions);
@@ -115,24 +149,19 @@ export async function POST(req: NextRequest) {
     if (body.localId) {
       const existing = await Sale.findOne({ localId: body.localId, userId: userObjectId }).lean();
       if (existing) {
-        // FIX: ensure Khata exists even for offline resync
         if (existing.isCredit) {
-          const hasKhata = await Customer.findOne({ saleId: existing._id, userId: userObjectId });
-          if (!hasKhata) {
-            try {
-              await Customer.create({
-                userId: userObjectId,
-                name: existing.customerName,
-                totalUdhar: Math.round(existing.total),
-                totalBusiness: Math.round(existing.total),
-                saleId: existing._id,
-                lastUdharDate: new Date(),
-                isPaid: false,
-                paidAmount: 0,
-              });
-            } catch (e) {
-              console.error("Khata create on resync failed", e);
+          try {
+            const customerDoc = await upsertKhataGrouped(
+              userObjectId,
+              existing.customerName || "Walk-in",
+              existing.total,
+              existing._id as Types.ObjectId
+            );
+            if (customerDoc &&!existing.customerId) {
+              await Sale.updateOne({ _id: existing._id }, { customerId: customerDoc._id });
             }
+          } catch (e) {
+            console.error("Khata upsert on resync failed", e);
           }
         }
         return NextResponse.json(existing, { status: 200 });
@@ -187,25 +216,18 @@ export async function POST(req: NextRequest) {
 
     if (isCredit) {
       try {
-        const customerDoc = await Customer.create({
-          userId: userObjectId,
-          name: customerName,
-          phone: body.customerPhone || "",
-          village: body.customerVillage || "",
-          totalUdhar: total,
-          totalBusiness: total,
-          saleId: sale._id,
-          lastUdharDate: new Date(),
-          isPaid: false,
-          paidAmount: 0,
-        });
+        const customerDoc = await upsertKhataGrouped(
+          userObjectId,
+          customerName,
+          total,
+          sale._id as Types.ObjectId,
+          body.customerPhone || "",
+          body.customerVillage || ""
+        );
         sale.set({ customerId: customerDoc._id });
         await sale.save();
       } catch (err) {
-        const dup = err as { code?: number; message?: string };
-        console.error("POST /api/sales Khata error:", dup.code, dup.message);
-        // Don't throw - sale already created, this is the Faisal fix
-        // If code 11000 = old index userId_1_name_1 still exists in Atlas - drop it!
+        console.error("POST /api/sales Khata grouping error:", err);
       }
     }
 

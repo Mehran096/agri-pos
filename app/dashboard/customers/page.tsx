@@ -1,10 +1,30 @@
 "use client";
 import { useEffect, useState } from "react";
 
+type WusoolEntry = {
+  amount: number;
+  date: string;
+  note?: string;
+};
+
+type Bill = {
+  _id: string;
+  productName: string;
+  quantity: number;
+  quantityInSub?: number;
+  unit: string;
+  subUnit: string;
+  qtyPerUnit: number;
+  total: number;
+  createdAt?: string;
+};
+
 type Customer = {
   _id: string;
+  saleIds?: string[];
   saleId?: string;
   name: string;
+  normalizedName?: string;
   phone: string;
   village: string;
   totalUdhar: number;
@@ -14,10 +34,18 @@ type Customer = {
   isPaid?: boolean;
   paidAmount?: number;
   paidAt?: string;
+  lastWusoolDate?: string;
   updatedAt?: string;
+  billsCount?: number;
+  wusoolHistory?: WusoolEntry[];
 };
 
 type CustomerApi = Customer & { totalUdhar: number };
+
+type CustomerDetailResponse = {
+  customer: Customer;
+  bills: Bill[];
+};
 
 export default function CustomersPage() {
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -27,6 +55,9 @@ export default function CustomersPage() {
   const [amount, setAmount] = useState("");
   const [wusoolLoading, setWusoolLoading] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [billsMap, setBillsMap] = useState<Record<string, Bill[]>>({});
+  const [billsLoading, setBillsLoading] = useState<string | null>(null);
 
   const fetchAndSet = async (searchTerm: string) => {
     try {
@@ -37,6 +68,8 @@ export default function CustomersPage() {
         totalUdhar: Math.round(c.totalUdhar || 0),
         totalBusiness: Math.round(c.totalBusiness || 0),
         paidAmount: Math.round(c.paidAmount || 0),
+        billsCount: c.billsCount || c.saleIds?.length || (c.saleId? 1 : 0),
+        wusoolHistory: c.wusoolHistory || [],
       }));
       const sorted = list.sort((a, b) => {
         if (a.isPaid!== b.isPaid) return a.isPaid? 1 : -1;
@@ -53,10 +86,54 @@ export default function CustomersPage() {
       await fetchAndSet(search);
     };
     void load();
-    return () => { active = false; };
+    return () => {
+      active = false;
+    };
   }, [search]);
 
-  const reload = async () => { await fetchAndSet(search); };
+  // Fetch bills when expand
+  useEffect(() => {
+    if (!expandedId) return;
+    if (billsMap[expandedId]) return;
+    const fetchBills = async () => {
+      setBillsLoading(expandedId);
+      try {
+        const res = await fetch(`/api/customers/${expandedId}`);
+        if (!res.ok) throw new Error("Failed");
+        const data = (await res.json()) as CustomerDetailResponse;
+        setBillsMap((prev) => ({...prev, [expandedId]: data.bills || [] }));
+      } catch {
+        // fallback offline
+        try {
+          const mod = await import("@/lib/offline-db");
+          const allSales = await mod.offlineDB.sales.toArray();
+          const related = allSales.filter((s) => {
+            const cust = customers.find((c) => c._id === expandedId);
+            return cust?.saleIds?.includes(s.localId);
+          });
+          const mapped: Bill[] = related.map((s) => ({
+            _id: s.localId,
+            productName: s.productName,
+            quantity: s.quantity,
+            quantityInSub: s.quantityInSub,
+            unit: s.unit || "bag",
+            subUnit: s.subUnit || "",
+            qtyPerUnit: s.qtyPerUnit || 1,
+            total: Math.round(s.total),
+            createdAt: s.createdAt,
+          }));
+          setBillsMap((prev) => ({...prev, [expandedId]: mapped }));
+        } catch {}
+      } finally {
+        setBillsLoading(null);
+      }
+    };
+    void fetchBills();
+  }, [expandedId, billsMap, customers]);
+
+  const reload = async () => {
+    await fetchAndSet(search);
+  };
 
   const handleWusool = async () => {
     if (!wusoolId ||!amount || wusoolLoading) return;
@@ -68,7 +145,9 @@ export default function CustomersPage() {
         body: JSON.stringify({ customerId: wusoolId, amount: Math.round(Number(amount)) }),
       });
       if (!res.ok) throw new Error("Wusool failed");
-      setWusoolId(null); setWusoolName(null); setAmount("");
+      setWusoolId(null);
+      setWusoolName(null);
+      setAmount("");
       await reload();
     } catch (err: unknown) {
       const msg = err instanceof Error? err.message : "Wusool failed";
@@ -101,15 +180,14 @@ export default function CustomersPage() {
 
   return (
     <div className="p-2 sm:p-3 md:p-4 max-w-2xl mx-auto">
-      {/* Header - compact for mobile */}
       <div className="bg-white rounded-xl sm:rounded-2xl p-3 sm:p-4 mb-2 sm:mb-3 flex justify-between items-center shadow-sm border">
         <div className="min-w-0">
           <h1 className="font-bold text-[14px] sm:text-[16px] leading-tight truncate">Khata / Customers</h1>
-          <p className="text-[10px] sm:text-[11px] text-gray-500">{pendingCount} pending | {paidCount} Wusool</p>
+          <p className="text-[10px] sm:text-[11px] text-gray-500">
+            {pendingCount} pending | {paidCount} Wusool
+          </p>
         </div>
-        <span className="font-bold text-red-600 text-[11px] sm:text-sm whitespace-nowrap ml-2">
-          Rs {totalUdhar.toLocaleString()}
-        </span>
+        <span className="font-bold text-red-600 text-[11px] sm:text-sm whitespace-nowrap ml-2">Rs {totalUdhar.toLocaleString()}</span>
       </div>
 
       <input
@@ -125,52 +203,126 @@ export default function CustomersPage() {
         ) : (
           customers.map((c) => {
             const udharDate = c.lastUdharDate || c.createdAt;
-            const wusoolDate = c.paidAt || c.updatedAt;
+            const wusoolDate = c.paidAt || c.lastWusoolDate || c.updatedAt;
             const isDeleting = deletingId === c._id;
+            const billsCount = c.billsCount || 1;
+            const isExpanded = expandedId === c._id;
+            const currentBills = billsMap[c._id] || [];
             return (
-            <div key={c._id} className={`bg-white p-2.5 sm:p-3.5 rounded-xl flex justify-between items-start border shadow-sm ${c.isPaid? "bg-green-50/60 border-green-200" : ""}`}>
-              <div className="flex-1 min-w-0 pr-2">
-                <p className="font-bold text-[12px] sm:text-[13px] leading-tight flex items-center gap-1 flex-wrap">
-                  <span className="truncate max-w-27.5 sm:max-w-none">{c.name}</span>
-                  <span className="text-[9px] text-gray-400 font-normal">#{c._id.slice(-5)}</span>
-                  {c.isPaid && <span className="bg-green-600 text-white text-[8px] px-2 py-0.5 rounded-full">WUSOOL</span>}
-                </p>
+              <div key={c._id} className={`bg-white p-2.5 sm:p-3.5 rounded-xl border shadow-sm ${c.isPaid? "bg-green-50/60 border-green-200" : ""}`}>
+                <div className="flex justify-between items-start">
+                  <div className="flex-1 min-w-0 pr-2 cursor-pointer" onClick={() => setExpandedId(isExpanded? null : c._id)}>
+                    <p className="font-bold text-[12px] sm:text-[13px] leading-tight flex items-center gap-1 flex-wrap">
+                      <span className="truncate">{c.name}</span>
+                      <span className="text-[9px] text-gray-400 font-normal">#{c._id.slice(-5)}</span>
+                      {billsCount > 1 && <span className="bg-blue-100 text-blue-700 text-[8px] px-2 py-0.5 rounded-full">{billsCount} bills</span>}
+                      {c.isPaid && <span className="bg-green-600 text-white text-[8px] px-2 py-0.5 rounded-full">WUSOOL</span>}
+                      {c.wusoolHistory && c.wusoolHistory.length > 0 && (
+                        <span className="bg-orange-100 text-orange-700 text-[8px] px-2 py-0.5 rounded-full">{c.wusoolHistory.length}x wusool</span>
+                      )}
+                    </p>
 
-                <div className="text-[10px] text-gray-500 leading-3 mt-1 truncate">
-                  {c.isPaid? (
-                    <>
-                      <div className="truncate">Udhar: {udharDate? new Date(udharDate).toLocaleDateString() : "-"} {new Date(udharDate||0).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</div>
-                      <div className="text-green-700 font-medium truncate">Wusool: {wusoolDate? new Date(wusoolDate).toLocaleDateString() : "-"} {new Date(wusoolDate||0).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</div>
-                    </>
-                  ) : (
-                    <div className="truncate">{udharDate? new Date(udharDate).toLocaleString() : ""} {c.village? `| ${c.village}` : ""}</div>
-                  )}
+                    <div className="text-[10px] text-gray-500 leading-3 mt-1 truncate">
+                      {c.isPaid? (
+                        <>
+                          <div className="truncate">
+                            Udhar: {udharDate? new Date(udharDate).toLocaleDateString() : "-"} {new Date(udharDate || 0).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                          </div>
+                          <div className="text-green-700 font-medium truncate">Wusool: {wusoolDate? new Date(wusoolDate).toLocaleString() : "-"}</div>
+                        </>
+                      ) : (
+                        <div className="truncate">
+                          {udharDate? new Date(udharDate).toLocaleString() : ""} {c.village? `| ${c.village}` : ""} {billsCount > 1? `| ${billsCount} bills grouped` : ""}
+                        </div>
+                      )}
+                    </div>
+
+                    {c.isPaid? (
+                      <p className="text-[11px] mt-1 truncate">
+                        <span className="text-green-700 font-bold">Rs {c.paidAmount?.toLocaleString()}</span> <span className="text-gray-300">|</span>{" "}
+                        <span className="text-[10px]">B: Rs {c.totalBusiness.toLocaleString()}</span>
+                      </p>
+                    ) : (
+                      <p className="text-[11px] mt-1 truncate">
+                        <span className="text-red-600 font-bold">Rs {c.totalUdhar.toLocaleString()}</span> <span className="text-gray-300">|</span>{" "}
+                        <span className="text-[10px]">B: Rs {c.totalBusiness.toLocaleString()}</span>
+                        {c.paidAmount? <span className="text-[10px] text-green-600 ml-1">Wusool Rs {c.paidAmount.toLocaleString()}</span> : null}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="flex shrink-0 gap-1">
+                    {c.isPaid? (
+                      <button
+                        onClick={() => handleDelete(c._id)}
+                        disabled={isDeleting}
+                        className={`px-3 py-1.5 rounded-lg text-[11px] font-bold transition ${isDeleting? "bg-gray-100 text-gray-400" : "bg-gray-100 text-gray-600 active:bg-red-500 active:text-white"}`}
+                      >
+                        {isDeleting? "..." : "Del"}
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => {
+                          setWusoolId(c._id);
+                          setWusoolName(c.name);
+                          setAmount(String(c.totalUdhar));
+                        }}
+                        className="bg-green-600 active:bg-green-700 text-white px-3.5 py-1.5 rounded-lg text-[11px] font-bold"
+                      >
+                        Wusool
+                      </button>
+                    )}
+                  </div>
                 </div>
 
-                {c.isPaid? (
-                  <p className="text-[11px] mt-1 truncate">
-                    <span className="text-green-700 font-bold">Rs {c.paidAmount?.toLocaleString()}</span> <span className="text-gray-300">|</span> <span className="text-[10px]">B: Rs {c.totalBusiness.toLocaleString()}</span>
-                  </p>
-                ) : (
-                  <p className="text-[11px] mt-1 truncate">
-                    <span className="text-red-600 font-bold">Rs {c.totalUdhar.toLocaleString()}</span> <span className="text-gray-300">|</span> <span className="text-[10px]">B: Rs {c.totalBusiness.toLocaleString()}</span>
-                  </p>
-                )}
-              </div>
+                {isExpanded && (
+                  <div className="mt-3 border-t pt-2">
+                    <p className="text-[11px] font-bold mb-2">Bills - What he bought ({billsCount})</p>
+                    {billsLoading === c._id? (
+                      <p className="text-[10px] text-gray-400">Loading products...</p>
+                    ) : currentBills.length > 0? (
+                      <div className="space-y-1.5 mb-3">
+                        {currentBills.map((b) => (
+                          <div key={b._id} className="flex justify-between bg-blue-50/70 border border-blue-100 rounded-lg px-2.5 py-2 text-[11px]">
+                            <div className="flex-1 min-w-0">
+                              <p className="font-bold leading-tight truncate">{b.productName}</p>
+                              <p className="text-[10px] text-gray-600 leading-tight">
+                                {b.quantity} {b.unit} {b.qtyPerUnit > 1? `x ${b.qtyPerUnit}${b.subUnit}` : ""}{" "}
+                                {b.quantityInSub? `+ ${b.quantityInSub}${b.subUnit}` : ""}
+                              </p>
+                              <p className="text-[9px] text-gray-400">{b.createdAt? new Date(b.createdAt).toLocaleString() : ""}</p>
+                            </div>
+                            <span className="font-bold ml-2">Rs {b.total.toLocaleString()}</span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-[10px] text-gray-400 mb-2">Bills info not loaded - Total Rs {c.totalBusiness.toLocaleString()} ({billsCount} bills)</p>
+                    )}
 
-              <div className="flex shrink-0">
-                {c.isPaid? (
-                  <button onClick={() => handleDelete(c._id)} disabled={isDeleting} className={`px-3 py-1.5 rounded-lg text-[11px] font-bold transition ${isDeleting? "bg-gray-100 text-gray-400" : "bg-gray-100 text-gray-600 active:bg-red-500 active:text-white"}`}>
-                    {isDeleting? "..." : "Del"}
-                  </button>
-                ) : (
-                  <button onClick={() => { setWusoolId(c._id); setWusoolName(c.name); setAmount(String(c.totalUdhar)); }} className="bg-green-600 active:bg-green-700 text-white px-3.5 py-1.5 rounded-lg text-[11px] font-bold">
-                    Wusool
-                  </button>
+                    <p className="text-[11px] font-bold mb-1 border-t pt-2">Wusool History - {c.name}</p>
+                    {c.wusoolHistory && c.wusoolHistory.length > 0? (
+                      <div className="space-y-1">
+                        {c.wusoolHistory.slice().reverse().map((w, idx) => (
+                          <div key={idx} className="flex justify-between bg-gray-50 rounded-lg px-2 py-1.5 text-[11px]">
+                            <span className="font-bold text-green-700">Rs {w.amount.toLocaleString()}</span>
+                            <span className="text-[10px] text-gray-500">{new Date(w.date).toLocaleString("en-PK", { dateStyle: "short", timeStyle: "short" })}</span>
+                          </div>
+                        ))}
+                        <div className="flex justify-between font-bold text-[11px] pt-1 border-t">
+                          <span>Total Wusool: Rs {c.paidAmount?.toLocaleString()}</span>
+                          <span className="text-red-600">Remaining: Rs {c.totalUdhar.toLocaleString()}</span>
+                        </div>
+                        <div className="text-[10px] text-gray-400">Total Bill: Rs {c.totalBusiness.toLocaleString()} | Bills: {billsCount}</div>
+                      </div>
+                    ) : (
+                      <p className="text-[10px] text-gray-400">No wusool yet. Total: Rs {c.totalBusiness.toLocaleString()}</p>
+                    )}
+                  </div>
                 )}
               </div>
-            </div>
-          )})
+            );
+          })
         )}
       </div>
 
@@ -178,10 +330,18 @@ export default function CustomersPage() {
         <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center p-2 sm:p-4 z-50">
           <div className="bg-white rounded-t-2xl sm:rounded-2xl p-4 w-full max-w-sm">
             <h2 className="font-bold text-[13px] mb-2">Wusool from {wusoolName}</h2>
-            <p className="text-[10px] text-gray-500 mb-2">ID: #{wusoolId.slice(-6)}</p>
-            <input type="number" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="Amount" className="w-full p-2.5 border rounded-xl mb-3 outline-none text-[13px] focus:ring-2 focus:ring-green-600" />
+            <p className="text-[10px] text-gray-500 mb-2">ID: #{wusoolId.slice(-6)} - {new Date().toLocaleString()}</p>
+            <input
+              type="number"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              placeholder="Amount"
+              className="w-full p-2.5 border rounded-xl mb-3 outline-none text-[13px] focus:ring-2 focus:ring-green-600"
+            />
             <div className="flex gap-2">
-              <button onClick={() => { setWusoolId(null); setWusoolName(null); }} disabled={wusoolLoading} className="flex-1 p-2.5 bg-gray-100 rounded-xl text-[13px] disabled:opacity-50">Cancel</button>
+              <button onClick={() => { setWusoolId(null); setWusoolName(null); }} disabled={wusoolLoading} className="flex-1 p-2.5 bg-gray-100 rounded-xl text-[13px] disabled:opacity-50">
+                Cancel
+              </button>
               <button onClick={handleWusool} disabled={wusoolLoading} className="flex-1 p-2.5 bg-green-600 text-white rounded-xl font-bold text-[13px] disabled:opacity-50">
                 {wusoolLoading? "..." : "Receive"}
               </button>

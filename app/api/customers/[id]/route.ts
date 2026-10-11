@@ -1,5 +1,6 @@
 import dbConnect from "@/lib/mongodb";
 import Customer from "@/models/Customer";
+import Sale from "@/models/Sale";
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "../../auth/[...nextauth]/route";
@@ -7,37 +8,114 @@ import { Types } from "mongoose";
 
 export const dynamic = "force-dynamic";
 
-export async function DELETE(
-  req: NextRequest, 
-  { params }: { params: Promise<{ id: string }> }
-) {
+type RouteParams = { params: Promise<{ id: string }> };
+
+type SaleBill = {
+  _id: Types.ObjectId;
+  productName: string;
+  quantity: number;
+  quantityInSub?: number;
+  unit?: string;
+  subUnit?: string;
+  qtyPerUnit?: number;
+  pricePerSub?: number;
+  total: number;
+  createdAt?: Date;
+};
+
+export async function GET(req: NextRequest, { params }: RouteParams) {
   try {
     const session = await getServerSession(authOptions);
-    if (!session?.user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     await dbConnect();
-    
-    const { id } = await params; // <-- FIX for Next 15
+    const { id } = await params;
+
+    if (!id || !Types.ObjectId.isValid(id)) {
+      return NextResponse.json({ error: "Invalid id" }, { status: 400 });
+    }
+
+    const customer = await Customer.findById(id).lean();
+    if (!customer) {
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
+
+    const saleIds = customer.saleIds || [];
+    const sales = (saleIds.length > 0
+      ? await Sale.find({ _id: { $in: saleIds } }).sort({ createdAt: 1 }).lean<SaleBill[]>()
+      : []) as SaleBill[];
+
+    const bills = sales.map((s) => ({
+      _id: s._id,
+      productName: s.productName,
+      quantity: s.quantity,
+      quantityInSub: s.quantityInSub,
+      unit: s.unit || "bag",
+      subUnit: s.subUnit || "",
+      qtyPerUnit: s.qtyPerUnit || 1,
+      pricePerSub: s.pricePerSub || 0,
+      total: Math.round(s.total || 0),
+      createdAt: s.createdAt,
+    }));
+
+    return NextResponse.json({
+      customer: {
+        ...customer,
+        totalUdhar: Math.round(customer.totalUdhar || 0),
+        totalBusiness: Math.round(customer.totalBusiness || 0),
+        paidAmount: Math.round(customer.paidAmount || 0),
+        wusoolHistory: customer.wusoolHistory || [],
+      },
+      bills,
+    });
+  } catch (e) {
+    console.error("GET /api/customers/[id] error:", e);
+    return NextResponse.json({ error: "Failed to fetch" }, { status: 500 });
+  }
+}
+
+export async function DELETE(req: NextRequest, { params }: RouteParams) {
+  try {
+    const session = await getServerSession(authOptions);
+    if (!session?.user?.id) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    await dbConnect();
+    const { id } = await params;
 
     if (!id || !Types.ObjectId.isValid(id)) {
       return NextResponse.json({ error: "Invalid id" }, { status: 400 });
     }
 
     const userIdStr = session.user.id;
-    const userIdObj = new Types.ObjectId(userIdStr);
+    const isObjectIdUser = Types.ObjectId.isValid(userIdStr);
+    const userObjectId = isObjectIdUser ? new Types.ObjectId(userIdStr) : null;
 
-    const result = await Customer.deleteOne({
-      _id: id,
-      $or: [{ userId: userIdObj }, { userId: userIdStr }],
-    });
+    const filter = {
+      _id: new Types.ObjectId(id),
+      ...(isObjectIdUser
+        ? { $or: [{ userId: userObjectId }, { userId: userIdStr }] }
+        : { userId: userIdStr }),
+    };
 
-    if (result.deletedCount === 0) {
+    const customer = await Customer.findOne(filter);
+    if (!customer) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
 
-    return NextResponse.json({ success: true });
+    await Customer.deleteOne({ _id: customer._id });
+
+    return NextResponse.json({
+      success: true,
+      deletedId: id,
+      deletedName: customer.name,
+      deletedBillsCount: customer.billsCount,
+    });
   } catch (e) {
-    console.error("DELETE error:", e);
+    console.error("DELETE /api/customers/[id] error:", e);
     return NextResponse.json({ error: "Delete failed" }, { status: 500 });
   }
 }

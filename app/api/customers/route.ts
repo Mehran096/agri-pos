@@ -19,6 +19,8 @@ type CustomerBody = {
 type CustomerQuery = {
   userId: Types.ObjectId;
   name?: { $regex: string; $options: string };
+  normalizedName?: string;
+  isPaid?: boolean;
 };
 
 export async function GET(req: NextRequest) {
@@ -28,21 +30,23 @@ export async function GET(req: NextRequest) {
     await dbConnect();
     const search = req.nextUrl.searchParams.get("search")?.trim() || "";
     const userId = new Types.ObjectId(session.user.id);
-    
+
     const query: CustomerQuery = { userId };
     if (search) {
       query.name = { $regex: search, $options: "i" };
     }
-    
+
     const customers = await Customer.find(query)
-      .sort({ isPaid: 1, lastUdharDate: -1, createdAt: -1 })
-      .lean<ICustomer[]>();
+    .sort({ isPaid: 1, lastUdharDate: -1, createdAt: -1 })
+    .lean<ICustomer[]>();
 
     const rounded = customers.map(c => ({
-      ...c,
+    ...c,
       totalUdhar: Math.round(c.totalUdhar || 0),
       totalBusiness: Math.round(c.totalBusiness || 0),
       paidAmount: Math.round(c.paidAmount || 0),
+      billsCount: c.billsCount || c.saleIds?.length || 1,
+      wusoolHistory: c.wusoolHistory || [],
     }));
 
     return NextResponse.json({ customers: rounded });
@@ -58,36 +62,67 @@ export async function POST(req: NextRequest) {
     if (!session?.user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     await dbConnect();
     const body = (await req.json()) as CustomerBody;
-    
+
     if (!body.name?.trim()) {
       return NextResponse.json({ error: "Name required" }, { status: 400 });
     }
 
     const userId = new Types.ObjectId(session.user.id);
-    
-    const doc: Partial<ICustomer> = {
-      name: body.name.trim(),
+    const trimmedName = body.name.trim();
+    const normalized = trimmedName.toLowerCase();
+    const total = Math.round(body.totalUdhar || 0);
+    const totalBiz = Math.round(body.totalBusiness || body.totalUdhar || 0);
+
+    const saleObjectId = body.saleId && Types.ObjectId.isValid(body.saleId)
+    ? new Types.ObjectId(body.saleId)
+      : undefined;
+
+    // GROUPING: find existing unpaid same name
+    const existing = await Customer.findOne({
+      userId,
+      normalizedName: normalized,
+      isPaid: false,
+    });
+
+    if (existing) {
+      existing.totalUdhar = Math.round((existing.totalUdhar || 0) + total);
+      existing.totalBusiness = Math.round((existing.totalBusiness || 0) + totalBiz);
+      existing.billsCount = (existing.billsCount || existing.saleIds?.length || 1) + (saleObjectId? 1 : 0);
+      existing.lastUdharDate = new Date();
+      if (body.phone) existing.phone = body.phone;
+      if (body.village) existing.village = body.village;
+      if (saleObjectId) {
+        if (!existing.saleIds) existing.saleIds = [];
+        const alreadyHas = existing.saleIds.some((id: Types.ObjectId) => id.toString() === saleObjectId.toString());
+        if (!alreadyHas) {
+          existing.saleIds.push(saleObjectId);
+        }
+      }
+      await existing.save();
+      return NextResponse.json(existing, { status: 200 });
+    }
+
+    // CREATE new grouped customer with history array
+    const doc = {
+      name: trimmedName,
+      normalizedName: normalized,
       phone: body.phone || "",
       village: body.village || "",
-      totalUdhar: Math.round(body.totalUdhar || 0),
-      totalBusiness: Math.round(body.totalBusiness || body.totalUdhar || 0),
+      totalUdhar: total,
+      totalBusiness: totalBiz,
+      saleIds: saleObjectId? [saleObjectId] : [],
+      billsCount: saleObjectId? 1 : 0,
       lastUdharDate: new Date(),
       userId,
       isPaid: false,
       paidAmount: 0,
+      wusoolHistory: [],
     };
-    if (body.saleId && Types.ObjectId.isValid(body.saleId)) {
-      doc.saleId = new Types.ObjectId(body.saleId);
-    }
-    
+
     const cust = await Customer.create(doc);
     return NextResponse.json(cust, { status: 201 });
   } catch (error) {
     console.error("POST /api/customers error:", error);
-    const mongoErr = error as { code?: number };
-    if (mongoErr.code === 11000) {
-      return NextResponse.json({ error: "Khata entry already exists for this sale" }, { status: 409 });
-    }
     return NextResponse.json({ error: "Failed to create customer" }, { status: 500 });
   }
 }

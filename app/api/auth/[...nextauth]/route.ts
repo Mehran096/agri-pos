@@ -1,4 +1,4 @@
-import NextAuth, { AuthOptions } from "next-auth";
+import NextAuth, { type NextAuthOptions } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
 import dbConnect from "@/lib/mongodb";
 import User from "@/models/User";
@@ -7,7 +7,38 @@ import bcrypt from "bcryptjs";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-export const authOptions: AuthOptions = {
+type LeanUser = {
+  _id: { toString: () => string };
+  email: string;
+  name: string;
+  role: string;
+  password: string;
+};
+
+// Augment session types
+declare module "next-auth" {
+  interface User {
+    role: string;
+  }
+  interface Session {
+    user: {
+      id: string;
+      name?: string | null;
+      email?: string | null;
+      image?: string | null;
+      role: string;
+    };
+  }
+}
+
+declare module "next-auth/jwt" {
+  interface JWT {
+    id: string;
+    role: string;
+  }
+}
+
+export const authOptions: NextAuthOptions = {
   providers: [
     CredentialsProvider({
       name: "Credentials",
@@ -16,26 +47,19 @@ export const authOptions: AuthOptions = {
         password: { label: "Password", type: "password" },
       },
       async authorize(credentials) {
-        if (!credentials?.email ||!credentials?.password) {
+        if (!credentials?.email || !credentials?.password) {
           return null;
         }
 
         await dbConnect();
-        const user = await User.findOne({ email: credentials.email }).lean() as unknown as {
-          _id: { toString: () => string };
-          email: string;
-          name: string;
-          role: string;
-          password: string;
-        } | null;
+        const user = (await User.findOne({ email: credentials.email }).lean()) as LeanUser | null;
 
         if (!user) return null;
 
         const isValid = await bcrypt.compare(credentials.password, user.password);
         if (!isValid) return null;
 
-        // fire-and-forget, don't block login
-        void User.updateOne({ _id: user._id }, { $set: { lastLoginAt: new Date() } });
+        void User.updateOne({ _id: user._id }, { $set: { lastLoginAt: new Date() } }).exec();
 
         return {
           id: user._id.toString(),
@@ -46,18 +70,18 @@ export const authOptions: AuthOptions = {
       },
     }),
   ],
-    callbacks: {
+  callbacks: {
     async jwt({ token, user }) {
       if (user) {
         token.id = user.id;
-        token.role = (user as { role: string }).role;
+        token.role = user.role;
       }
       return token;
     },
     async session({ session, token }) {
-      if (session.user) {
-        session.user.id = token.id;
-        session.user.role = token.role;
+      if (session.user && token) {
+        session.user.id = token.id as string;
+        session.user.role = token.role as string;
       }
       return session;
     },

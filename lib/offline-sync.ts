@@ -1,4 +1,4 @@
-import { offlineDB, OfflineSale, OfflineProduct, OfflineCustomer } from './offline-db';
+import { offlineDB, OfflineSale, OfflineProduct, OfflineCustomer, upsertOfflineCustomer, WusoolHistoryEntry } from './offline-db';
 
 export interface OfflineSaleData {
   productId: string;
@@ -28,6 +28,12 @@ export interface OfflineSaleData {
   isCredit?: boolean;
 }
 
+export type WusoolSyncPayload = {
+  amount: number;
+  note?: string;
+  date: string;
+};
+
 type SyncManager = { register: (tag: string) => Promise<void> };
 type SyncRegistration = ServiceWorkerRegistration & { sync: SyncManager };
 
@@ -51,7 +57,7 @@ export async function saveSaleOffline(saleData: OfflineSaleData): Promise<string
   const totalRounded = Math.round(saleData.total);
 
   const isCredit = saleData.paymentType === "credit" || saleData.paymentType === "udhar" || saleData.isCredit === true;
-  const status = isCredit ? "pending" : "paid";
+  const status: "paid" | "pending" | "partial" = isCredit ? "pending" : "paid";
 
   const newSale: OfflineSale = {
     localId,
@@ -65,6 +71,7 @@ export async function saveSaleOffline(saleData: OfflineSaleData): Promise<string
     total: totalRounded,
     soldBy: saleData.soldBy || 'Al-Farooq',
     customerName: saleData.customerName || 'Walk-in',
+    normalizedCustomerName: (saleData.customerName || 'Walk-in').trim().toLowerCase(),
     paymentType: isCredit ? "credit" : (saleData.paymentType || 'cash'),
     userId: saleData.userId,
     createdAt: now,
@@ -85,27 +92,18 @@ export async function saveSaleOffline(saleData: OfflineSaleData): Promise<string
 
   await offlineDB.sales.put(newSale);
 
-  // Separate row per udhar - no merging by name
-  if (isCredit && saleData.customerName && saleData.customerName.trim() !== "Walk-in") {
+  if (isCredit && saleData.customerName && saleData.customerName.trim().toLowerCase() !== "walk-in") {
     try {
-      const trimmedName = saleData.customerName.trim();
-      const cust: OfflineCustomer = {
-        localId: genLocalId(),
-        saleId: localId,
-        name: trimmedName,
-        phone: saleData.customerPhone || "",
-        village: saleData.customerVillage || "",
-        totalUdhar: totalRounded,
-        totalBusiness: totalRounded,
-        lastUdharDate: now,
-        synced: 0,
-        createdAt: now,
-        isPaid: false,
-        paidAmount: 0,
-      };
-      await offlineDB.customers.put(cust);
+      const customerLocalId = await upsertOfflineCustomer(
+        newSale,
+        saleData.customerVillage || "",
+        saleData.customerPhone || ""
+      );
+      if (customerLocalId) {
+        await offlineDB.sales.update(localId, { customerId: customerLocalId });
+      }
     } catch {
-      // ignore
+      // grouping error ignored
     }
   }
   
@@ -141,14 +139,21 @@ export async function saveSaleOffline(saleData: OfflineSaleData): Promise<string
   return localId;
 }
 
-// NEW: Offline wusool - mark as paid, don't delete
-export async function wusoolOffline(customerLocalId: string, amount: number): Promise<boolean> {
+export async function wusoolOffline(customerLocalId: string, amount: number, note = ""): Promise<boolean> {
   const customer = await offlineDB.customers.get(customerLocalId);
   if (!customer) return false;
   
   const paid = Math.round(amount);
-  const newUdhar = Math.round(customer.totalUdhar - paid);
+  const newUdhar = Math.round((customer.totalUdhar || 0) - paid);
   const now = new Date().toISOString();
+
+  const entry: WusoolHistoryEntry = {
+    amount: paid,
+    date: now,
+    note: note,
+  };
+
+  const existingHistory = customer.wusoolHistory || [];
 
   if (newUdhar <= 0) {
     await offlineDB.customers.update(customerLocalId, {
@@ -156,14 +161,34 @@ export async function wusoolOffline(customerLocalId: string, amount: number): Pr
       isPaid: true,
       paidAmount: customer.totalBusiness,
       paidAt: now,
+      lastWusoolDate: now,
+      wusoolHistory: [...existingHistory, entry],
       synced: 0,
     });
+    const saleIds = customer.saleIds || [];
+    for (const sId of saleIds) {
+      await offlineDB.sales.update(sId, { status: "paid", isCredit: false }).catch(()=>{});
+    }
   } else {
     await offlineDB.customers.update(customerLocalId, {
       totalUdhar: newUdhar,
+      paidAmount: (customer.paidAmount || 0) + paid,
+      lastWusoolDate: now,
+      wusoolHistory: [...existingHistory, entry],
       synced: 0,
     });
   }
+
+  const payload: WusoolSyncPayload = { amount: paid, note, date: now };
+
+  await offlineDB.syncQueue.add({
+    type: 'wusool',
+    localId: customerLocalId,
+    payload: payload,
+    createdAt: new Date(),
+    attempts: 0,
+  });
+
   return true;
 }
 
@@ -196,6 +221,7 @@ export async function syncOfflineSales(): Promise<{ synced: number; failed: numb
           total: sale.total,
           localId: sale.localId,
           customerName: sale.customerName,
+          normalizedCustomerName: sale.normalizedCustomerName,
           paymentType: sale.paymentType,
           customerId: sale.customerId,
           paidAmount: sale.paidAmount,
@@ -209,7 +235,11 @@ export async function syncOfflineSales(): Promise<{ synced: number; failed: numb
       
       if (res.ok) {
         await offlineDB.sales.update(sale.localId, { synced: 1 });
-        await offlineDB.customers.where('saleId').equals(sale.localId).modify({ synced: 1 });
+        const allCustomers = await offlineDB.customers.toArray();
+        const withSale = allCustomers.filter((c: OfflineCustomer) => c.saleIds.includes(sale.localId));
+        for (const wc of withSale) {
+          await offlineDB.customers.update(wc.localId, { synced: 1 });
+        }
         synced++;
       } else {
         failed++;
@@ -219,20 +249,26 @@ export async function syncOfflineSales(): Promise<{ synced: number; failed: numb
     }
   }
   
-  // Sync wusool done offline customers
   try {
-    const unsyncedCustomers = await offlineDB.customers.where('synced').equals(0).toArray();
-    for (const c of unsyncedCustomers) {
-      if (c.isPaid) {
-        // Try to sync paid status via wusool API
-        try {
-          await fetch('/api/khata/wusool', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ customerName: c.name, amount: c.totalBusiness }),
-          });
-          await offlineDB.customers.update(c.localId, { synced: 1 });
-        } catch {}
+    const wusoolQueue = await offlineDB.syncQueue.where('type').equals('wusool').toArray();
+    for (const q of wusoolQueue) {
+      try {
+        const p = q.payload as WusoolSyncPayload;
+        const cust = await offlineDB.customers.get(q.localId);
+        if (!cust) continue;
+        await fetch('/api/khata/wusool', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+            customerId: cust._id || cust.localId, 
+            customerName: cust.name,
+            amount: p.amount,
+            note: p.note
+          }),
+        });
+        if (q.id) await offlineDB.syncQueue.delete(q.id);
+      } catch {
+        // keep in queue for retry
       }
     }
   } catch {}
