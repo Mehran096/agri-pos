@@ -251,14 +251,18 @@ export default function SalesPage() {
           const cust: OfflineCustomer = {
             localId: generateLocalId(),
             saleId: localId,
+            saleIds: [localId],
             name: finalCustomer,
+            normalizedName: finalCustomer.trim().toLowerCase(),
             totalUdhar: Math.round(calc.total),
             totalBusiness: Math.round(calc.total),
             lastUdharDate: now,
             synced: 0,
             createdAt: now,
+            billsCount: 1,
             isPaid: false,
             paidAmount: 0,
+            wusoolHistory: [],
           };
           await offlineDB.customers.put(cust);
         }

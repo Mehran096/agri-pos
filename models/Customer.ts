@@ -11,15 +11,15 @@ export interface ICustomer extends Document {
   normalizedName: string;
   phone: string;
   village: string;
-  totalUdhar: number; // remaining
-  totalBusiness: number; // total bills ever
+  totalUdhar: number;
+  totalBusiness: number;
   lastUdharDate: Date;
   saleIds: Types.ObjectId[];
   userId: Types.ObjectId;
   billsCount: number;
   idsGrouped?: Types.ObjectId[];
   isPaid: boolean;
-  paidAmount: number; // total wusool
+  paidAmount: number;
   paidAt?: Date;
   lastWusoolDate?: Date;
   wusoolHistory: IWusoolEntry[];
@@ -43,10 +43,10 @@ const CustomerSchema = new Schema<ICustomer>(
     totalUdhar: { type: Number, default: 0 },
     totalBusiness: { type: Number, default: 0 },
     lastUdharDate: { type: Date, default: Date.now },
-    saleIds: [{ type: Schema.Types.ObjectId, ref: "Sale", default: [] }],
+    saleIds: { type: [Schema.Types.ObjectId], ref: "Sale", default: [] }, // FIXED
     userId: { type: Schema.Types.ObjectId, ref: "User", required: true },
     billsCount: { type: Number, default: 1 },
-    idsGrouped: [{ type: Schema.Types.ObjectId, default: [] }],
+    idsGrouped: { type: [Schema.Types.ObjectId], default: [] }, // FIXED
     isPaid: { type: Boolean, default: false },
     paidAmount: { type: Number, default: 0 },
     paidAt: { type: Date },
@@ -62,7 +62,7 @@ CustomerSchema.pre("validate", function () {
   }
 });
 
-// 100% correct indexes - as per your screenshot
+// 100% correct indexes
 CustomerSchema.index(
   { userId: 1, normalizedName: 1 },
   {
@@ -72,6 +72,6 @@ CustomerSchema.index(
 );
 CustomerSchema.index({ userId: 1, createdAt: -1 });
 CustomerSchema.index({ userId: 1, isPaid: 1 });
-CustomerSchema.index({ userId: 1 }); // for your existing query
+CustomerSchema.index({ userId: 1 });
 
 export default mongoose.models.Customer || mongoose.model<ICustomer>("Customer", CustomerSchema);

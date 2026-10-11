@@ -213,7 +213,7 @@ export default function CustomersPage() {
                 <div className="flex justify-between items-start">
                   <div className="flex-1 min-w-0 pr-2 cursor-pointer" onClick={() => setExpandedId(isExpanded? null : c._id)}>
                     <p className="font-bold text-[12px] sm:text-[13px] leading-tight flex items-center gap-1 flex-wrap">
-                      <span className="truncate">{c.name}</span>
+                      <span className="wrap-break-word">{c.name}</span>
                       <span className="text-[9px] text-gray-400 font-normal">#{c._id.slice(-5)}</span>
                       {billsCount > 1 && <span className="bg-blue-100 text-blue-700 text-[8px] px-2 py-0.5 rounded-full">{billsCount} bills</span>}
                       {c.isPaid && <span className="bg-green-600 text-white text-[8px] px-2 py-0.5 rounded-full">WUSOOL</span>}

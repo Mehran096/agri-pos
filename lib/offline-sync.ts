@@ -61,6 +61,7 @@ export async function saveSaleOffline(saleData: OfflineSaleData): Promise<string
 
   const newSale: OfflineSale = {
     localId,
+    saleId: localId, // FIX 1 - your sales/page.tsx needs this
     productId: saleData.productId,
     productName: saleData.productName,
     quantity: qtyMain,
@@ -102,9 +103,7 @@ export async function saveSaleOffline(saleData: OfflineSaleData): Promise<string
       if (customerLocalId) {
         await offlineDB.sales.update(localId, { customerId: customerLocalId });
       }
-    } catch {
-      // grouping error ignored
-    }
+    } catch {}
   }
   
   try {
@@ -123,9 +122,7 @@ export async function saveSaleOffline(saleData: OfflineSaleData): Promise<string
           p.synced = 0;
         });
     }
-  } catch {
-    // product not in cache
-  }
+  } catch {}
 
   if (typeof window !== 'undefined' && 'serviceWorker' in navigator && 'SyncManager' in window) {
     try {
@@ -236,7 +233,11 @@ export async function syncOfflineSales(): Promise<{ synced: number; failed: numb
       if (res.ok) {
         await offlineDB.sales.update(sale.localId, { synced: 1 });
         const allCustomers = await offlineDB.customers.toArray();
-        const withSale = allCustomers.filter((c: OfflineCustomer) => c.saleIds.includes(sale.localId));
+        // FIX 2 - safe check
+        const withSale = allCustomers.filter((c: OfflineCustomer) => {
+              const ids = c.saleIds || [];
+              return ids.includes(sale.localId) || c.saleId === sale.localId;
+            });
         for (const wc of withSale) {
           await offlineDB.customers.update(wc.localId, { synced: 1 });
         }
@@ -267,9 +268,7 @@ export async function syncOfflineSales(): Promise<{ synced: number; failed: numb
           }),
         });
         if (q.id) await offlineDB.syncQueue.delete(q.id);
-      } catch {
-        // keep in queue for retry
-      }
+      } catch {}
     }
   } catch {}
   

@@ -2,7 +2,7 @@ import Dexie, { Table } from 'dexie';
 
 export interface WusoolHistoryEntry {
   amount: number;
-  date: string; // ISO string for Dexie
+  date: string;
   note?: string;
 }
 
@@ -51,6 +51,7 @@ export interface OfflineSale {
   isPartialSale?: boolean;
   pricePerSub?: number;
   customerId?: string;
+  saleId?: string; // <-- FIX for your sales/page.tsx line 253 error
   paidAmount?: number;
   pendingAmount?: number;
   status?: "paid" | "pending" | "partial";
@@ -62,6 +63,7 @@ export interface OfflineCustomer {
   localId: string;
   _id?: string;
   saleIds: string[];
+  saleId?: string; // <-- FIX - old data has singular, new has array
   name: string;
   normalizedName: string;
   phone?: string;
@@ -78,6 +80,7 @@ export interface OfflineCustomer {
   lastWusoolDate?: string;
   wusoolHistory?: WusoolHistoryEntry[];
 }
+
 export type WusoolSyncPayload = {
   amount: number;
   note?: string;
@@ -199,7 +202,6 @@ export class OfflineDB extends Dexie {
         }
       }
     });
-    // NEW V7 - Wusool History with date/time
     this.version(7).stores({
       products: 'localId, _id, userId, synced, name',
       sales: 'localId, productId, userId, synced, createdAt, customerName, normalizedCustomerName, status, isCredit',
@@ -209,14 +211,29 @@ export class OfflineDB extends Dexie {
       await tx.table("customers").toCollection().modify((c: OfflineCustomer) => {
         if (!c.wusoolHistory) c.wusoolHistory = [];
         if (!c.paidAmount) c.paidAmount = (c.totalBusiness || 0) - (c.totalUdhar || 0);
-        // migrate old paidAmount without history into first history entry
-        if (c.paidAmount > 0 && c.wusoolHistory.length === 0) {
-          c.wusoolHistory.push({
-            amount: c.paidAmount,
+        if (c.paidAmount! > 0 && c.wusoolHistory!.length === 0) {
+          c.wusoolHistory!.push({
+            amount: c.paidAmount!,
             date: c.paidAt || c.lastWusoolDate || new Date().toISOString(),
             note: "Migrated old wusool"
           });
         }
+      });
+    });
+    // NEW V8 - FIX saleId field for your sales/page.tsx error
+    this.version(8).stores({
+      products: 'localId, _id, userId, synced, name',
+      sales: 'localId, productId, userId, synced, createdAt, customerName, normalizedCustomerName, status, isCredit, saleId',
+      customers: 'localId, _id, name, normalizedName, totalUdhar, synced, isPaid, saleId',
+      syncQueue: '++id, type, localId, createdAt',
+    }).upgrade(async tx => {
+      await tx.table("sales").toCollection().modify((s: OfflineSale) => {
+        if (!s.saleId) s.saleId = s.localId;
+      });
+      await tx.table("customers").toCollection().modify((c: OfflineCustomer) => {
+        if (!c.saleId && c.saleIds && c.saleIds.length > 0) c.saleId = c.saleIds[0];
+        if (!c.saleIds && c.saleId) c.saleIds = [c.saleId];
+        if (!c.saleIds) c.saleIds = [];
       });
     });
   }
@@ -239,6 +256,7 @@ export async function upsertOfflineCustomer(sale: OfflineSale, village = "", pho
       totalUdhar: Math.round((existing.totalUdhar || 0) + sale.total),
       totalBusiness: Math.round((existing.totalBusiness || 0) + sale.total),
       saleIds: [...(existing.saleIds || []), sale.localId],
+      saleId: sale.localId,
       billsCount: (existing.billsCount || 1) + 1,
       lastUdharDate: new Date().toISOString(),
     });
@@ -248,6 +266,7 @@ export async function upsertOfflineCustomer(sale: OfflineSale, village = "", pho
     const cust: OfflineCustomer = {
       localId,
       saleIds: [sale.localId],
+      saleId: sale.localId,
       name,
       normalizedName: normalized,
       phone,
@@ -267,7 +286,6 @@ export async function upsertOfflineCustomer(sale: OfflineSale, village = "", pho
   }
 }
 
-// NEW - Offline Wusool with history
 export async function addOfflineWusool(customerLocalId: string, amount: number, note = "") {
   const customer = await offlineDB.customers.get(customerLocalId);
   if (!customer) return null;
@@ -300,7 +318,6 @@ export async function addOfflineWusool(customerLocalId: string, amount: number, 
     });
   }
 
-  // queue for sync
   await offlineDB.syncQueue.add({
     type: 'wusool',
     localId: customerLocalId,

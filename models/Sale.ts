@@ -42,8 +42,8 @@ const SaleSchema = new Schema<ISale>(
     price: { type: Number, required: true },
     buyPrice: { type: Number, required: true, default: 0 },
     sellPrice: { type: Number, required: true, default: 0 },
-    originalPrice: { type: Number, required: true, default: 0 },
-    discount: { type: Number, required: true, default: 0 },
+    originalPrice: { type: Number, default: 0 }, // FIXED - not required
+    discount: { type: Number, default: 0 }, // FIXED
     profit: { type: Number, required: true, default: 0 },
     total: { type: Number, required: true },
     soldBy: { type: String, default: "shop" },
@@ -72,6 +72,17 @@ const SaleSchema = new Schema<ISale>(
   },
   { timestamps: true }
 );
+
+SaleSchema.pre("validate", function () {
+  if (this.paymentType === "credit" || this.paymentType === "udhar") {
+    this.isCredit = true;
+    if (this.status === "paid") this.status = "pending";
+  } else {
+    this.isCredit = false;
+    this.status = "paid";
+  }
+  if (!this.originalPrice) this.originalPrice = this.sellPrice || this.price;
+});
 
 // All indexes defined here only (no duplicates)
 SaleSchema.index({ userId: 1, createdAt: -1 });
