@@ -34,6 +34,10 @@ function safeReport(r: unknown): ReportItem {
   const buy = typeof o.buy === "number"? o.buy : total - profit;
   return { count: typeof o.count === "number"? o.count : 0, total, profit, buy: buy < 0? 0 : buy };
 }
+function safeNum(n: unknown, fb = 0) {
+  const v = Number(n);
+  return Number.isFinite(v)? v : fb;
+}
 function useIsOnline() {
   const subscribe = useCallback((cb: () => void) => {
     window.addEventListener("online", cb); window.addEventListener("offline", cb);
@@ -51,6 +55,7 @@ export default function MainDashboard() {
   const [reports, setReports] = useState<Reports>({ today: emptyReport(), month: emptyReport(), year: emptyReport(), all: emptyReport(), khata: { totalUdhar: 0, customers: 0, paid: 0, totalWusool: 0 } });
   const [loading, setLoading] = useState(true); const [pendingCount, setPendingCount] = useState(0);
   const [totalUdhar, setTotalUdhar] = useState(0); const [udharCustomers, setUdharCustomers] = useState(0); const [paidCount, setPaidCount] = useState(0);
+  const [yearLoss, setYearLoss] = useState(0);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -82,14 +87,15 @@ export default function MainDashboard() {
           setTotalUdhar(cachedCustomers.filter(c=>!c.isPaid).reduce((a,b)=>a+b.totalUdhar,0));
           setUdharCustomers(cachedCustomers.filter(c=>!c.isPaid).length);
           setPaidCount(cachedCustomers.filter(c=>c.isPaid).length);
+          setYearLoss(cachedSales.filter(s=> (s.profit||0) < 0).reduce((a,b)=> a + Math.abs(b.profit||0),0));
           setLoading(false); return;
         }
-        // FIXED: fetch customers directly for correct Khata total
-        const [prodRes, salesRes, reportRes, khataRes] = await Promise.all([
+        const [prodRes, salesRes, reportRes, khataRes, yearSalesRes] = await Promise.all([
           fetch("/api/products?limit=100", { signal: controller.signal }),
           fetch("/api/sales?filter=today&limit=5", { signal: controller.signal }),
           fetch("/api/reports", { signal: controller.signal }),
           fetch("/api/customers?search=", { signal: controller.signal }),
+          fetch("/api/sales?filter=yearly&limit=500", { signal: controller.signal }),
         ]);
         const prodData = (await prodRes.json()) as ProductsResponse;
         const prodList = (Array.isArray(prodData)? prodData : prodData.products || []).map(fixProduct);
@@ -106,7 +112,6 @@ export default function MainDashboard() {
           all: safeReport(reportData?.all),
           khata: reportData?.khata || { totalUdhar: 0, customers: 0, paid: 0, totalWusool: 0 }
         });
-        // CORRECT TOTAL FROM CUSTOMERS COLLECTION - NOT REPORTS
         try {
           const khataData = await khataRes.json() as { customers: CustomerLite[] };
           const list = khataData.customers || [];
@@ -116,11 +121,16 @@ export default function MainDashboard() {
           setUdharCustomers(pending.length);
           setPaidCount(paid.length);
         } catch {
-          // fallback to reports if customers fetch fails
           setTotalUdhar(reportData?.khata?.totalUdhar || 0);
           setUdharCustomers(reportData?.khata?.customers || 0);
           setPaidCount(reportData?.khata?.paid || 0);
         }
+        try {
+          const yData = await yearSalesRes.json() as { sales: Sale[] };
+          const ySales = yData.sales || [];
+          const loss = ySales.filter(s=> safeNum(s.profit) < 0).reduce((a,b)=> a + Math.abs(safeNum(b.profit)),0);
+          setYearLoss(Math.round(loss));
+        } catch { setYearLoss(0); }
       } catch (err) { if ((err as Error).name!== "AbortError") console.error(err); } finally { setLoading(false); }
     };
     void fetchStats(); return () => controller.abort();
@@ -150,7 +160,8 @@ export default function MainDashboard() {
       <p className="text-[11px] text-green-700 font-bold mb-1">0321-9801598 | 0345-9495414 • Shewa Swabi</p>
       <p className="text-gray-400 mb-4 text-[11px]">{new Date().toLocaleDateString()} • {isOffline? "Offline" : "Online"} • Seeds, Pesticides, Fertilizers</p>
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 mb-5">
+      {/* ROW 1: Today, Month, Year */}
+      <div className="grid grid-cols-2 lg:grid-cols-3 gap-2.5 mb-3">
         <div className="bg-white p-3 sm:p-5 rounded-xl border">
           <p className="text-gray-400 text-[10px]">Today Sale (Sell)</p>
           <p className="text-[16px] font-bold mt-1">Rs. {reports.today.total.toFixed(0)}</p>
@@ -163,6 +174,16 @@ export default function MainDashboard() {
           <p className="text-[10px] text-gray-500 mt-1">Buy Rs.{reports.month.buy.toFixed(0)} • Profit <span className="text-blue-600 font-bold">Rs.{reports.month.profit.toFixed(0)}</span></p>
           <p className="text-[10px] text-gray-400 mt-1">{reports.month.count} sales</p>
         </div>
+        <div className="bg-white p-3 sm:p-5 rounded-xl border">
+          <p className="text-gray-400 text-[10px]">This Year (Sell)</p>
+          <p className="text-[16px] font-bold mt-1">Rs. {reports.year.total.toFixed(0)}</p>
+          <p className="text-[10px] text-gray-500 mt-1">Buy Rs.{reports.year.buy.toFixed(0)} • Profit <span className="text-green-700 font-bold">Rs.{reports.year.profit.toFixed(0)}</span></p>
+          <p className="text-[10px] text-gray-400 mt-1">{reports.year.count} sales • Loss Rs.{yearLoss.toFixed(0)}</p>
+        </div>
+      </div>
+
+      {/* ROW 2: Udhar, Stock, Yearly Profit, Yearly Loss */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 mb-5">
         <div className="bg-red-50 border-red-200 p-3 sm:p-5 rounded-xl border">
           <p className="text-red-500 text-[10px] font-bold">Total Udhar - Khata</p>
           <p className="text-[16px] font-bold mt-1 text-red-600">Rs. {totalUdhar.toLocaleString()}</p>
@@ -174,6 +195,18 @@ export default function MainDashboard() {
           <p className="text-[16px] font-bold mt-1">Rs. {stockValue.toFixed(0)}</p>
           <p className="text-[10px] text-gray-500 mt-1">Buy Rs.{stockBuyValue.toFixed(0)} • Profit <span className="text-green-700 font-bold">Rs.{stockProfitPotential.toFixed(0)}</span></p>
           <p className="text-[9px] text-gray-400 mt-1">{products.length} products • {products.reduce((a,p)=>a+p.stock,0).toFixed(2)} total stock</p>
+        </div>
+        <div className="bg-green-50 border-green-200 p-3 sm:p-5 rounded-xl border">
+          <p className="text-green-700 text-[10px] font-bold">Yearly Profit</p>
+          <p className="text-[16px] font-bold mt-1 text-green-700">Rs. {reports.year.profit.toFixed(0)}</p>
+          <p className="text-[10px] text-gray-500 mt-1">Gross Rs.{reports.year.total.toFixed(0)} • Buy Rs.{reports.year.buy.toFixed(0)}</p>
+          <p className="text-[9px] text-gray-400 mt-1">{reports.year.count} bills in {new Date().getFullYear()}</p>
+        </div>
+        <div className={`p-3 sm:p-5 rounded-xl border ${yearLoss>0? "bg-orange-50 border-orange-200" : "bg-white"}`}>
+          <p className={`text-[10px] font-bold ${yearLoss>0? "text-orange-600" : "text-gray-400"}`}>Yearly Loss</p>
+          <p className={`text-[16px] font-bold mt-1 ${yearLoss>0? "text-red-600" : "text-green-600"}`}>Rs. {yearLoss.toFixed(0)}</p>
+          <p className="text-[10px] text-gray-500 mt-1">{yearLoss>0? "From discount / negative profit bills" : "No loss - All profit 👍"}</p>
+          <p className="text-[9px] text-gray-400 mt-1">{yearLoss>0? "Check history for discount" : `${reports.year.count} bills all positive`}</p>
         </div>
       </div>
 

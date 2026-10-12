@@ -81,8 +81,8 @@ export default function ProductsPage() {
     if (typeof window!== "undefined" &&!window.navigator.onLine) {
       const cached = await offlineDB.products.toArray();
       const filtered = cached
-       .filter((c) =>!currentSearch || c.name.toLowerCase().includes(currentSearch.toLowerCase()))
-       .map((c) => ({
+      .filter((c) =>!currentSearch || c.name.toLowerCase().includes(currentSearch.toLowerCase()))
+      .map((c) => ({
           _id: c._id || c.localId,
           name: c.name,
           price: c.price,
@@ -160,8 +160,8 @@ export default function ProductsPage() {
       try {
         const cached = await offlineDB.products.toArray();
         const offlineFiltered = cached
-         .filter((c) =>!currentSearch || c.name.toLowerCase().includes(currentSearch.toLowerCase()))
-         .map((c) => ({
+        .filter((c) =>!currentSearch || c.name.toLowerCase().includes(currentSearch.toLowerCase()))
+        .map((c) => ({
             _id: c._id || c.localId,
             name: c.name,
             price: c.price,
@@ -218,8 +218,8 @@ export default function ProductsPage() {
             const unsynced = cached.filter((c) => c.synced === 0);
             await offlineDB.products.clear();
             const toCache: OfflineProduct[] = [
-             ...unsynced,
-             ...data.products.map((p) => ({
+            ...unsynced,
+            ...data.products.map((p) => ({
                 _id: p._id,
                 localId: p._id,
                 name: p.name,
@@ -259,9 +259,12 @@ export default function ProductsPage() {
     setPage(1);
   };
 
+  // FIXED: Now correctly sets subUnit for kg loose and liter loose
   const handleUnitChange = (unit: string) => {
     if (unit === "bag") setForm({...form, unit, qtyPerUnit: "50", subUnit: "kg" });
     else if (unit === "bottle") setForm({...form, unit, qtyPerUnit: "1000", subUnit: "ml" });
+    else if (unit === "kg") setForm({...form, unit, qtyPerUnit: "1", subUnit: "kg" });
+    else if (unit === "liter") setForm({...form, unit, qtyPerUnit: "1", subUnit: "liter" });
     else setForm({...form, unit });
   };
 
@@ -271,9 +274,9 @@ export default function ProductsPage() {
     const sell = Number(form.sellPrice);
     if (sell <= 0) { alert("Sell price required"); return; }
 
-    const qty = Number(form.qtyPerUnit) || (form.unit === "bag"? 50 : 1000);
+    const qty = Number(form.qtyPerUnit) || (form.unit === "bag"? 50 : form.unit === "liter"? 1 : 1000);
     const sub = form.subUnit;
-    const base = sub === "liter"? qty * 1000 : qty;
+    const base = sub === "liter"? qty * 1000 : sub === "kg"? qty * 1000 : qty;
 
     const payload = {
       name: form.name,
@@ -353,8 +356,8 @@ export default function ProductsPage() {
       sellPrice: String(p.sellPrice || p.price),
       unit: p.unit,
       stock: String(p.stock?? 10),
-      qtyPerUnit: String(p.qtyPerUnit || (p.unit === "bag"? 50 : 1000)),
-      subUnit: p.subUnit || (p.unit === "bag"? "kg" : "ml"),
+      qtyPerUnit: String(p.qtyPerUnit || (p.unit === "bag"? 50 : p.unit === "liter"? 1 : 1000)),
+      subUnit: p.subUnit || (p.unit === "bag" || p.unit === "kg"? "kg" : p.unit === "liter"? "liter" : "ml"),
     });
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
@@ -373,6 +376,7 @@ export default function ProductsPage() {
   };
 
   const liveProfit = form.buyPrice && form.sellPrice? Number(form.sellPrice) - Number(form.buyPrice) : 0;
+  const perSubLabel = form.subUnit === "kg"? "kg" : form.subUnit === "liter"? "liter" : form.subUnit;
 
   return (
     <div className="p-3 sm:p-6 md:p-8 max-w-6xl mx-auto min-h-screen bg-gray-50">
@@ -407,7 +411,6 @@ export default function ProductsPage() {
           <input placeholder="Stock bags" type="number" step="0.01" value={form.stock} onChange={(e) => setForm({...form, stock: e.target.value })} className="border p-2.5 rounded-lg text-[13px] outline-none" />
         </div>
 
-        {/* BAG SIZE SELECTOR */}
         {form.unit === "bag" && (
           <div className="mt-3 bg-green-50 p-3 rounded-xl border border-green-100">
             <p className="text-[11px] font-bold text-green-800 mb-2">Bag Size (Kg per bag):</p>
@@ -417,11 +420,10 @@ export default function ProductsPage() {
               ))}
               <input type="number" placeholder="Custom kg" value={form.qtyPerUnit} onChange={(e) => setForm({...form, qtyPerUnit: e.target.value, subUnit: "kg" })} className="w-24 border p-1.5 rounded-full text-[12px] text-center" />
             </div>
-            <p className="text-[10px] text-gray-500 mt-1">Price per kg will be auto: Rs.{form.sellPrice? (Number(form.sellPrice)/ (Number(form.qtyPerUnit)||50)).toFixed(1) : "0"}/kg</p>
+            <p className="text-[10px] text-gray-500 mt-1">Price per kg: Rs.{form.sellPrice? (Number(form.sellPrice)/ (Number(form.qtyPerUnit)||50)).toFixed(1) : "0"}/kg</p>
           </div>
         )}
 
-        {/* BOTTLE SIZE SELECTOR */}
         {form.unit === "bottle" && (
           <div className="mt-3 bg-blue-50 p-3 rounded-xl border border-blue-100">
             <p className="text-[11px] font-bold text-blue-800 mb-2">Bottle Size:</p>
@@ -431,11 +433,24 @@ export default function ProductsPage() {
               ))}
               <input type="number" placeholder="ml" value={form.subUnit === "ml"? form.qtyPerUnit : ""} onChange={(e) => setForm({...form, qtyPerUnit: e.target.value, subUnit: "ml" })} className="w-20 border p-1.5 rounded-full text-[12px] text-center" />
             </div>
-            <p className="text-[10px] text-gray-500 mt-1">Price per 100ml: Rs.{form.sellPrice? ((Number(form.sellPrice)/ (Number(form.qtyPerUnit.includes(".")? Number(form.qtyPerUnit)*1000 : Number(form.qtyPerUnit)) || 1000))*100).toFixed(1) : "0"}</p>
           </div>
         )}
 
-        {liveProfit!== 0 && <p className={`mt-2 text-[12px] font-medium ${liveProfit > 0? "text-green-600" : "text-red-600"}`}>Profit: Rs.{liveProfit} {form.buyPrice && Number(form.buyPrice) > 0? `(${Math.round((liveProfit / Number(form.buyPrice)) * 100)}%)` : ""} - Per {form.subUnit}: Rs.{(liveProfit / (Number(form.qtyPerUnit)||1)).toFixed(2)}</p>}
+        {form.unit === "kg" && (
+          <div className="mt-3 bg-yellow-50 p-3 rounded-xl border border-yellow-100">
+            <p className="text-[11px] font-bold text-yellow-800 mb-1">Kg Loose - Per kg sale</p>
+            <p className="text-[10px] text-gray-500">Price per gram: Rs.{form.sellPrice? (Number(form.sellPrice)/1000).toFixed(3) : "0"}/g • Per 100g: Rs.{form.sellPrice? (Number(form.sellPrice)/10).toFixed(1) : "0"}</p>
+          </div>
+        )}
+
+        {form.unit === "liter" && (
+          <div className="mt-3 bg-cyan-50 p-3 rounded-xl border border-cyan-100">
+            <p className="text-[11px] font-bold text-cyan-800 mb-1">Liter Loose - Per liter sale</p>
+            <p className="text-[10px] text-gray-500">Price per ml: Rs.{form.sellPrice? (Number(form.sellPrice)/1000).toFixed(3) : "0"}/ml • Per 100ml: Rs.{form.sellPrice? (Number(form.sellPrice)/10).toFixed(1) : "0"}</p>
+          </div>
+        )}
+
+        {liveProfit!== 0 && <p className={`mt-2 text-[12px] font-medium ${liveProfit > 0? "text-green-600" : "text-red-600"}`}>Profit: Rs.{liveProfit} {form.buyPrice && Number(form.buyPrice) > 0? `(${Math.round((liveProfit / Number(form.buyPrice)) * 100)}%)` : ""} - Per {perSubLabel}: Rs.{(liveProfit / (Number(form.qtyPerUnit)||1)).toFixed(2)}</p>}
 
         <div className="flex gap-2 mt-3">
           <button type="submit" className="bg-green-600 hover:bg-green-700 text-white px-6 py-2 rounded-lg text-[13px] font-medium">{editId? "Update" : "+ Add Product"}</button>
@@ -449,9 +464,9 @@ export default function ProductsPage() {
             {products.map((p) => {
               const sell = p.sellPrice || p.price;
               const buy = p.buyPrice || Math.round(sell * 0.75);
-              const qty = p.qtyPerUnit || (p.unit === "bag"? 50 : 1000);
-              const sub = p.subUnit || (p.unit === "bag"? "kg" : "ml");
-              const displaySize = sub === "liter"? `${qty}L` : `${qty}${sub}`;
+              const qty = p.qtyPerUnit || (p.unit === "bag"? 50 : p.unit === "liter"? 1 : 1000);
+              const sub = p.subUnit || (p.unit === "bag" || p.unit === "kg"? "kg" : p.unit === "liter"? "liter" : "ml");
+              const displaySize = sub === "liter"? `${qty}L` : sub === "kg" && p.unit === "kg"? `${qty}kg` : `${qty}${sub}`;
               return (
                 <div key={p._id} className={`bg-white border p-3 rounded-xl shadow-sm ${p._id.startsWith("local_")? "bg-amber-50/60" : ""}`}>
                   <div className="flex justify-between">
@@ -460,10 +475,10 @@ export default function ProductsPage() {
                   </div>
                   <div className="grid grid-cols-3 gap-1 mt-2 text-[10px]">
                     <div className="bg-red-50 p-1.5 rounded text-center"><div className="text-gray-500">Buy</div><div className="font-bold text-red-600">Rs.{buy}</div></div>
-                    <div className="bg-blue-50 p-1.5 rounded text-center"><div className="text-gray-500">Sell</div><div className="font-bold text-blue-600">Rs.{sell}</div><div className="text-[8px]">{(sell/qty).toFixed(1)}/{sub}</div></div>
+                    <div className="bg-blue-50 p-1.5 rounded text-center"><div className="text-gray-500">Sell</div><div className="font-bold text-blue-600">Rs.{sell}</div><div className="text-[8px]">{(sell/qty).toFixed(2)}/{sub}</div></div>
                     <div className="bg-green-50 p-1.5 rounded text-center"><div className="text-gray-500">Profit</div><div className="font-bold text-green-600">Rs.{sell-buy}</div></div>
                   </div>
-                  <p className="text-[11px] text-gray-500 mt-1">Stock: {Number(p.stock??0).toFixed(2)} {p.unit} {p.unit === "bag" || p.unit === "bottle"? `(${(Number(p.stock??0)*qty).toFixed(1)}${sub})` : ""}</p>
+                  <p className="text-[11px] text-gray-500 mt-1">Stock: {Number(p.stock??0).toFixed(2)} {p.unit} {(p.unit === "bag" || p.unit === "bottle" || p.unit === "kg" || p.unit === "liter") && qty? `(${(Number(p.stock??0)*qty).toFixed(1)}${sub})` : ""}</p>
                   <div className="flex gap-1.5 mt-2">
                     <button onClick={() => handleEdit(p)} className="flex-1 bg-blue-50 text-blue-600 py-1.5 rounded-lg text-[11px]">Edit</button>
                     <button onClick={() => handleDelete(p._id)} className="flex-1 bg-red-50 text-red-600 py-1.5 rounded-lg text-[11px]">Del</button>

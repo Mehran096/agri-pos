@@ -73,10 +73,9 @@ export default function SalesPage() {
   const [paymentType, setPaymentType] = useState<"cash" | "credit">("cash");
   const [customerSuggest, setCustomerSuggest] = useState<string[]>([]);
 
-  useEffect(() => {
+  useEffect(() => { 
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setMounted(true);
-  }, []);
+    setMounted(true); }, []);
 
   const getSellCalc = useCallback((p: Product) => {
     const mode = modeMap[p._id] || "main";
@@ -107,7 +106,8 @@ export default function SalesPage() {
     if (typeof window!== "undefined" &&!window.navigator.onLine) {
       const offlineSales = await offlineDB.sales.where("synced").equals(0).reverse().toArray();
       const mapped: Sale[] = offlineSales.map((o) => ({ _id: o.localId, productId: o.productId, productName: o.productName, quantity: o.quantity?? 1, quantityInSub: o.quantityInSub, unit: o.unit, subUnit: o.subUnit, isPartialSale: o.isPartialSale, price: o.sellPrice?? 0, buyPrice: o.buyPrice?? 0, sellPrice: o.sellPrice?? 0, profit: o.profit?? 0, total: o.total?? 0, createdAt: o.createdAt, localId: o.localId, qtyPerUnit: o.qtyPerUnit, customerName: o.customerName, status: o.paymentType==="credit"?"pending":"paid", paymentType: o.paymentType }));
-      setSales(mapped); setTotal(mapped.reduce((a, b) => a + b.total, 0)); setProfit(mapped.reduce((a, b) => a + b.profit, 0)); setPendingTotal(mapped.filter(s=>s.status==="pending").reduce((a,b)=>a+b.total,0)); return;
+      setSales(mapped); setTotal(mapped.reduce((a, b) => a + b.total, 0)); setProfit(mapped.reduce((a, b) => a + b.profit, 0)); setPendingTotal(0);
+      return;
     }
     try {
       const salesRes = await fetch(`/api/sales?filter=${filter}&page=1&limit=15`);
@@ -151,8 +151,8 @@ export default function SalesPage() {
         const searchLower = productSearch.toLowerCase();
         if (cached.length > 0 &&!cancelled) {
           const filteredCache = cached
-      .map((c: OfflineProduct) => fixProduct({ _id: c._id || c.localId, name: c.name, price: c.sellPrice?? c.price?? 0, buyPrice: c.buyPrice?? 0, sellPrice: c.sellPrice?? c.price?? 0, stock: c.stock, unit: c.unit, qtyPerUnit: c.qtyPerUnit, subUnit: c.subUnit } as Product))
-      .filter((p) =>!searchLower || p.name.toLowerCase().includes(searchLower));
+     .map((c: OfflineProduct) => fixProduct({ _id: c._id || c.localId, name: c.name, price: c.sellPrice?? c.price?? 0, buyPrice: c.buyPrice?? 0, sellPrice: c.sellPrice?? c.price?? 0, stock: c.stock, unit: c.unit, qtyPerUnit: c.qtyPerUnit, subUnit: c.subUnit } as Product))
+     .filter((p) =>!searchLower || p.name.toLowerCase().includes(searchLower));
           const dedupedCache = dedupeProducts(filteredCache);
           const pagedCache = dedupedCache.slice(0, productPage * PRODUCTS_PER_PAGE);
           setProducts(pagedCache);
@@ -187,16 +187,25 @@ export default function SalesPage() {
     const fetchData = async () => {
       if (page === 1) setLoading(true); else setLoadingMore(true);
       try {
-        const offlineSales = await offlineDB.sales.where("synced").equals(0).reverse().toArray();
-        const offlineMapped: Sale[] = offlineSales.map((o) => ({ _id: o.localId, productId: o.productId, productName: o.productName, quantity: o.quantity?? 1, quantityInSub: o.quantityInSub, unit: o.unit, subUnit: o.subUnit, isPartialSale: o.isPartialSale, price: o.sellPrice?? 0, buyPrice: o.buyPrice?? 0, sellPrice: o.sellPrice?? 0, profit: o.profit?? 0, total: o.total?? 0, createdAt: o.createdAt, localId: o.localId, qtyPerUnit: o.qtyPerUnit, customerName: o.customerName, status: o.paymentType==="credit"?"pending":"paid", paymentType: o.paymentType }));
+        const offlineAll = await offlineDB.sales.reverse().toArray();
+        const offlineUnsynced = offlineAll.filter((s) => s.synced === 0);
+        const offlineMappedUnsynced: Sale[] = offlineUnsynced.map((o) => ({ _id: o.localId, productId: o.productId, productName: o.productName, quantity: o.quantity?? 1, quantityInSub: o.quantityInSub, unit: o.unit, subUnit: o.subUnit, isPartialSale: o.isPartialSale, price: o.sellPrice?? 0, buyPrice: o.buyPrice?? 0, sellPrice: o.sellPrice?? 0, profit: o.profit?? 0, total: o.total?? 0, createdAt: o.createdAt, localId: o.localId, qtyPerUnit: o.qtyPerUnit, customerName: o.customerName, status: o.paymentType==="credit"?"pending":"paid", paymentType: o.paymentType }));
+        const dedupedUnsynced = Array.from(new Map(offlineMappedUnsynced.map((s) => [s.localId || s._id, s])).values());
+
         if (typeof window!== "undefined" &&!window.navigator.onLine) {
-          setSales(offlineMapped); setTotal(offlineMapped.reduce((a, b) => a + b.total, 0)); setProfit(offlineMapped.reduce((a, b) => a + b.profit, 0)); setPendingTotal(offlineMapped.filter(s=>s.status==="pending").reduce((a,b)=>a+b.total,0));
-          setPagination({ page: 1, totalPages: 1, hasMore: false, totalCount: offlineMapped.length }); return;
+          setSales(dedupedUnsynced); setTotal(dedupedUnsynced.reduce((a, b) => a + b.total, 0)); setProfit(dedupedUnsynced.reduce((a, b) => a + b.profit, 0)); setPendingTotal(0);
+          setPagination({ page: 1, totalPages: 1, hasMore: false, totalCount: dedupedUnsynced.length }); return;
         }
         const salesRes = await fetch(`/api/sales?filter=${filter}&page=${page}&limit=15`, { signal: controller.signal });
         const salesData = (await salesRes.json()) as SalesApiResponse;
-        if (page === 1) setSales([...offlineMapped,...salesData.sales]); else setSales((prev) => [...prev,...salesData.sales]);
-        setTotal(salesData.total + offlineMapped.reduce((a, b) => a + b.total, 0)); setProfit(salesData.profit + offlineMapped.reduce((a, b) => a + b.profit, 0)); setPendingTotal((salesData.pendingTotal??0)+offlineMapped.filter(s=>s.status==="pending").reduce((a,b)=>a+b.total,0)); setPagination(salesData.pagination);
+        // FIX: dedupe offline + server, don't double count
+        const combined = [...dedupedUnsynced,...salesData.sales];
+        const finalSales = Array.from(new Map(combined.map((s) => [s._id, s])).values());
+        if (page === 1) setSales(finalSales); else setSales((prev) => { const merged = [...prev,...salesData.sales]; return Array.from(new Map(merged.map((s) => [s._id, s])).values()); });
+        setTotal(salesData.total);
+        setProfit(salesData.profit);
+        setPendingTotal(salesData.pendingTotal??0);
+        setPagination(salesData.pagination);
       } catch (err) { if ((err as Error).name!== "AbortError") console.error(err); } finally { setLoading(false); setLoadingMore(false); }
     }; void fetchData(); return () => controller.abort();
   }, [filter, page]);
@@ -234,7 +243,6 @@ export default function SalesPage() {
     setSales((prev) => [newSale,...prev]);
     setTotal((t) => t + calc.total);
     setProfit((pr) => pr + calc.profit);
-    if (paymentType==="credit") setPendingTotal(pt=>pt+calc.total);
     setSubQtyMap((prev) => ({...prev, [p._id]: 0}));
     setTimeout(() => setSellingId(null), 400);
     const offlineSale: OfflineSale = {
@@ -246,7 +254,6 @@ export default function SalesPage() {
     void (async () => {
       try {
         await offlineDB.sales.put(offlineSale);
-        // FIXED: Offline Khata separate row per udhar with saleId
         if (paymentType==="credit" && finalCustomer.toLowerCase()!=="walk-in") {
           const cust: OfflineCustomer = {
             localId: generateLocalId(),
@@ -273,6 +280,8 @@ export default function SalesPage() {
           if (res.ok) {
             await offlineDB.sales.update(localId, { synced: 1 });
             await offlineDB.customers.where('saleId').equals(localId).modify({ synced: 1 });
+            // refresh pendingTotal from server (now 438 after wusool logic)
+            void refreshSalesOnly();
           }
         } else setPendingCount((c) => c + 1);
       } catch { setPendingCount((c) => c + 1); }
@@ -293,37 +302,20 @@ const handleDeleteSale = async (id: string) => {
       const pr = Math.round(saleToDelete.profit);
       setTotal((t) => Math.max(0, t - amt));
       setProfit((prv) => Math.max(0, prv - pr));
-      if (saleToDelete.status === "pending") {
-        setPendingTotal((pt) => Math.max(0, pt - amt));
-      }
     }
     if (productId) {
-      setProducts((prev) =>
-        prev.map((p) =>
-          p._id === productId? {...p, stock: p.stock + qtyToRestore } : p
-        )
-      );
+      setProducts((prev) => prev.map((p) => p._id === productId? {...p, stock: p.stock + qtyToRestore } : p));
     }
 
     if (id.startsWith("local_")) {
       const rec = await offlineDB.sales.get(id);
       await offlineDB.sales.delete(id);
-      // FIXED: delete exact Khata row by saleId
       await offlineDB.customers.where('saleId').equals(id).delete();
       if (productId) {
-        await offlineDB.products
-         .where("_id")
-         .equals(productId)
-         .or("localId")
-         .equals(productId)
-         .modify((prod) => {
-            prod.stock += qtyToRestore;
-          });
+        await offlineDB.products.where("_id").equals(productId).or("localId").equals(productId).modify((prod) => { prod.stock += qtyToRestore; });
       }
       if (rec?.synced === 1) {
-        try {
-          await fetch(`/api/sales/${id}`, { method: "DELETE" });
-        } catch {}
+        try { await fetch(`/api/sales/${id}`, { method: "DELETE" }); } catch {}
       } else {
         setPendingCount((c) => Math.max(0, c - 1));
       }
@@ -334,16 +326,10 @@ const handleDeleteSale = async (id: string) => {
         throw new Error(errData?.error || "Delete failed");
       }
       if (productId) {
-        await offlineDB.products
-         .where("_id")
-         .equals(productId)
-         .or("localId")
-         .equals(productId)
-         .modify((prod) => {
-            prod.stock += qtyToRestore;
-          });
+        await offlineDB.products.where("_id").equals(productId).or("localId").equals(productId).modify((prod) => { prod.stock += qtyToRestore; });
       }
     }
+    void refreshSalesOnly();
   } catch (e) {
     window.alert((e as Error).message || "Delete failed");
     void refreshSalesOnly();
@@ -477,7 +463,6 @@ const handleDeleteSale = async (id: string) => {
               {sales.map((s) => {
                 const isPartial =!!s.isPartialSale &&!!s.quantityInSub;
                 const leftPrice = isPartial? s.total : s.sellPrice;
-                const qtyPerUnit = s.qtyPerUnit || (s.quantity && s.quantityInSub? s.quantityInSub / s.quantity : 50);
                 const isDeleting = deletingId === s._id;
                 return (
                   <div key={s._id} className={`p-3 border-b last:border-0 ${s._id.startsWith("local_")? "bg-amber-50/50" : ""} ${s.status==="pending"?"bg-red-50/30":""} ${isDeleting? "opacity-60 bg-red-50" : ""}`}>

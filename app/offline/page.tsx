@@ -13,7 +13,7 @@ export default function OfflinePage() {
         <Link href="/" className="bg-green-700 text-white px-4 py-2 rounded-xl text-sm font-bold">Home</Link>
         <Link href="/dashboard" className="bg-white border px-4 py-2 rounded-xl text-sm">Dashboard</Link>
       </div>
-      <p className="text-[10px] text-gray-400 mt-6">0333-9426374 • Ismaila</p>
+      <p className="text-[10px] text-gray-400 mt-6">0345-9495414 • Shewa</p>
     </div>
   );
 }

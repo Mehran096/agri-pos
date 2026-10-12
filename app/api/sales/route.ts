@@ -36,17 +36,6 @@ type SaleBody = {
   quantityInSub?: number;
   isPartialSale?: boolean;
   pricePerSub?: number;
-  paidAmount?: number;
-  pendingAmount?: number;
-  status?: SaleStatus;
-  isCredit?: boolean;
-};
-
-type SaleQuery = {
-  userId: Types.ObjectId;
-  createdAt?: { $gte?: Date; $lte?: Date };
-  productName?: { $regex: string; $options: "i" };
-  status?: SaleStatus;
 };
 
 function getDateRange(filter: string): { start: Date; end: Date } {
@@ -55,11 +44,20 @@ function getDateRange(filter: string): { start: Date; end: Date } {
   const end = new Date(now);
   if (filter === "today") start.setHours(0, 0, 0, 0);
   else if (filter === "yesterday") {
-    start.setDate(now.getDate() - 1); start.setHours(0, 0, 0, 0);
-    end.setDate(now.getDate() - 1); end.setHours(23, 59, 59, 999);
-  } else if (filter === "weekly") { start.setDate(now.getDate() - 7); start.setHours(0, 0, 0, 0); }
-  else if (filter === "monthly") { start.setDate(1); start.setHours(0, 0, 0, 0); }
-  else if (filter === "yearly") { start.setMonth(0, 1); start.setHours(0, 0, 0, 0); }
+    start.setDate(now.getDate() - 1);
+    start.setHours(0, 0, 0, 0);
+    end.setDate(now.getDate() - 1);
+    end.setHours(23, 59, 59, 999);
+  } else if (filter === "weekly") {
+    start.setDate(now.getDate() - 7);
+    start.setHours(0, 0, 0, 0);
+  } else if (filter === "monthly") {
+    start.setDate(1);
+    start.setHours(0, 0, 0, 0);
+  } else if (filter === "yearly") {
+    start.setMonth(0, 1);
+    start.setHours(0, 0, 0, 0);
+  }
   return { start, end };
 }
 
@@ -68,6 +66,7 @@ export async function GET(req: NextRequest) {
     const session = await getServerSession(authOptions);
     if (!session?.user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     await dbConnect();
+
     const searchParams = req.nextUrl.searchParams;
     const filter = searchParams.get("filter") || "all";
     const search = searchParams.get("search")?.trim() || "";
@@ -77,24 +76,69 @@ export async function GET(req: NextRequest) {
     const skip = (page - 1) * limit;
     const userObjectId = new Types.ObjectId(session.user.id);
     const { start, end } = getDateRange(filter);
-    const query: SaleQuery = { userId: userObjectId };
-    if (filter!== "all") query.createdAt = filter === "yesterday"? { $gte: start, $lte: end } : { $gte: start };
-    if (search) query.productName = { $regex: search, $options: "i" };
-    if (statusParam && ["paid", "pending", "partial"].includes(statusParam)) query.status = statusParam as SaleStatus;
-    const matchStage: SaleQuery = { userId: userObjectId };
-    if (query.createdAt) matchStage.createdAt = query.createdAt;
-    if (query.productName) matchStage.productName = query.productName;
-    if (query.status) matchStage.status = query.status;
-    const [sales, totalCount, totalAgg] = await Promise.all([
-      Sale.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
-      Sale.countDocuments(query),
-      Sale.aggregate([{ $match: matchStage }, { $group: { _id: null, total: { $sum: "$total" }, profit: { $sum: "$profit" }, pending: { $sum: "$pendingAmount" } } }]),
+
+    const saleQuery: Record<string, unknown> = { userId: userObjectId };
+    if (filter !== "all") {
+      saleQuery.createdAt = filter === "yesterday" ? { $gte: start, $lte: end } : { $gte: start };
+    }
+    if (search) {
+      saleQuery.$or = [
+        { productName: { $regex: search, $options: "i" } },
+        { customerName: { $regex: search, $options: "i" } },
+      ];
+    }
+    if (statusParam === "pending") {
+      const pendingOr = [
+        { status: "pending" as SaleStatus },
+        { isCredit: true },
+        { paymentType: "credit" },
+        { paymentType: "udhar" },
+      ];
+      const existingOr = saleQuery.$or as unknown[] | undefined;
+      if (existingOr) {
+        saleQuery.$and = [{ $or: existingOr }, { $or: pendingOr }];
+        delete saleQuery.$or;
+      } else {
+        saleQuery.$or = pendingOr;
+      }
+    }
+
+    const totalMatch: Record<string, unknown> = { userId: userObjectId };
+    if (saleQuery.createdAt) totalMatch.createdAt = saleQuery.createdAt;
+    if (search) {
+      totalMatch.$or = [
+        { productName: { $regex: search, $options: "i" } },
+        { customerName: { $regex: search, $options: "i" } },
+      ];
+    }
+
+    const customerQuery: Record<string, unknown> = { userId: userObjectId, isPaid: false };
+    if (search) customerQuery.name = { $regex: search, $options: "i" };
+
+    const [sales, totalCount, totalAgg, pendingAgg] = await Promise.all([
+      Sale.find(saleQuery).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
+      Sale.countDocuments(saleQuery),
+      Sale.aggregate([{ $match: totalMatch }, { $group: { _id: null, total: { $sum: "$total" }, profit: { $sum: "$profit" } } }]),
+      Customer.aggregate([{ $match: customerQuery }, { $group: { _id: null, total: { $sum: "$totalUdhar" } } }]),
     ]);
-    const totalResult = totalAgg[0] as { total: number; profit: number; pending: number } | undefined;
+
+    const totalResult = totalAgg[0] as { total: number; profit: number } | undefined;
+    const pendingResult = pendingAgg[0] as { total: number } | undefined;
+
     return NextResponse.json({
-      sales, total: totalResult?.total??0, profit: totalResult?.profit??0, pendingTotal: totalResult?.pending??0,
-      filter, count: totalCount,
-      pagination: { page, limit, totalCount, totalPages: Math.ceil(totalCount / limit), hasMore: skip + sales.length < totalCount },
+      sales,
+      total: totalResult?.total ?? 0,
+      profit: totalResult?.profit ?? 0,
+      pendingTotal: Math.round(pendingResult?.total ?? 0),
+      filter,
+      count: totalCount,
+      pagination: {
+        page,
+        limit,
+        totalCount,
+        totalPages: Math.ceil(totalCount / limit),
+        hasMore: skip + sales.length < totalCount,
+      },
     });
   } catch (error) {
     console.error("GET /api/sales error:", error);
@@ -102,7 +146,6 @@ export async function GET(req: NextRequest) {
   }
 }
 
-// GROUPING HELPER - permanent fix for Arshad duplicates
 async function upsertKhataGrouped(
   userId: Types.ObjectId,
   name: string,
@@ -130,7 +173,7 @@ async function upsertKhataGrouped(
         billsCount: 1,
       },
       $set: { lastUdharDate: new Date() },
-      $addToSet: { saleIds: saleId, idsGrouped: saleId },
+      $addToSet: { saleIds: saleId },
     },
     { upsert: true, new: true }
   );
@@ -142,76 +185,74 @@ export async function POST(req: NextRequest) {
     if (!session?.user?.id) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     await dbConnect();
     const body = (await req.json()) as SaleBody;
-    if (!body.productId || body.quantity === undefined) return NextResponse.json({ error: "productId, quantity required" }, { status: 400 });
+    if (!body.productId || body.quantity === undefined) {
+      return NextResponse.json({ error: "productId, quantity required" }, { status: 400 });
+    }
     if (body.quantity < 0.001) return NextResponse.json({ error: "Quantity must be > 0" }, { status: 400 });
+
     const userObjectId = new Types.ObjectId(session.user.id);
 
     if (body.localId) {
       const existing = await Sale.findOne({ localId: body.localId, userId: userObjectId }).lean();
-      if (existing) {
-        if (existing.isCredit) {
-          try {
-            const customerDoc = await upsertKhataGrouped(
-              userObjectId,
-              existing.customerName || "Walk-in",
-              existing.total,
-              existing._id as Types.ObjectId
-            );
-            if (customerDoc &&!existing.customerId) {
-              await Sale.updateOne({ _id: existing._id }, { customerId: customerDoc._id });
-            }
-          } catch (e) {
-            console.error("Khata upsert on resync failed", e);
-          }
-        }
-        return NextResponse.json(existing, { status: 200 });
-      }
+      if (existing) return NextResponse.json(existing, { status: 200 });
     }
 
-    if (!Types.ObjectId.isValid(body.productId)) return NextResponse.json({ error: "Invalid productId" }, { status: 400 });
+    if (!Types.ObjectId.isValid(body.productId)) {
+      return NextResponse.json({ error: "Invalid productId" }, { status: 400 });
+    }
+
     const product = await Product.findOne({ _id: body.productId, userId: userObjectId });
     if (!product) return NextResponse.json({ error: "Product not found" }, { status: 404 });
+
     const quantity = Number(body.quantity);
-    if (!body.localId && product.stock < quantity - 0.0001) return NextResponse.json({ error: `Only ${product.stock.toFixed(2)} left in stock` }, { status: 400 });
+    if (!body.localId && product.stock < quantity - 0.0001) {
+      return NextResponse.json({ error: `Only ${product.stock.toFixed(2)} left` }, { status: 400 });
+    }
 
-    const buyPrice = body.buyPrice?? product.buyPrice?? 0;
-    const originalPrice = body.originalPrice?? product.sellPrice?? product.price?? 0;
-    const sellPrice = body.sellPrice?? body.price?? originalPrice;
-    const total = Math.round(body.total?? sellPrice * quantity);
-    const discount = Math.round(body.discount?? (originalPrice - sellPrice) * quantity);
-    const profit = Math.round(body.profit?? (sellPrice - buyPrice) * quantity);
+    const buyPrice = body.buyPrice ?? product.buyPrice ?? 0;
+    const originalPrice = body.originalPrice ?? product.sellPrice ?? product.price ?? 0;
+    const sellPrice = body.sellPrice ?? body.price ?? originalPrice;
+    const total = Math.round(body.total ?? sellPrice * quantity);
+    const profit = Math.round(body.profit ?? (sellPrice - buyPrice) * quantity);
 
-    const unit = body.unit?? product.unit?? "bag";
-    const subUnit = body.subUnit?? product.subUnit?? "";
-    const qtyPerUnit = body.qtyPerUnit?? product.qtyPerUnit?? 1;
-    const quantityInSub = body.quantityInSub?? (body.isPartialSale? quantity * qtyPerUnit : 0);
-    const isPartialSale = body.isPartialSale?? (quantityInSub > 0 && quantityInSub!== quantity);
-    const pricePerSub = body.pricePerSub?? (qtyPerUnit > 0? sellPrice / qtyPerUnit : 0);
+    const isCredit =
+      (body.paymentType || "").toLowerCase() === "credit" ||
+      (body.paymentType || "").toLowerCase() === "udhar";
 
-    const rawType = (body.paymentType || "cash").toLowerCase();
-    const isCredit = rawType === "credit" || rawType === "udhar" || body.isCredit === true;
-    const paymentType = isCredit? "credit" : rawType;
     const customerName = body.customerName?.trim() || "Walk-in";
-    const status: SaleStatus = isCredit? "pending" : "paid";
+    const status: SaleStatus = isCredit ? "pending" : "paid";
 
-    if (isCredit && (!customerName || customerName.toLowerCase() === "walk-in")) {
+    if (isCredit && customerName.toLowerCase() === "walk-in") {
       return NextResponse.json({ error: "Customer name required for Udhar" }, { status: 400 });
     }
 
     const sale = await Sale.create({
       productId: new Types.ObjectId(body.productId),
       productName: body.productName?.trim() || product.name,
-      quantity, price: Number(sellPrice), buyPrice: Number(buyPrice), sellPrice: Number(sellPrice),
-      originalPrice: Number(originalPrice), discount: Number(discount), profit: Number(profit), total: Number(total),
-      soldBy: body.soldBy?.trim() || "shop", userId: userObjectId,
+      quantity,
+      price: Number(sellPrice),
+      buyPrice: Number(buyPrice),
+      sellPrice: Number(sellPrice),
+      originalPrice: Number(originalPrice),
+      discount: 0,
+      profit: Number(profit),
+      total: Number(total),
+      soldBy: body.soldBy?.trim() || "shop",
+      userId: userObjectId,
       localId: body.localId || `online_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
-      customerName, paymentType, synced: true,
-      offlineCreatedAt: body.offlineCreatedAt? new Date(body.offlineCreatedAt) : new Date(),
-      unit, subUnit, qtyPerUnit: Number(qtyPerUnit), quantityInSub: Number(quantityInSub),
-      isPartialSale: Boolean(isPartialSale), pricePerSub: Number(pricePerSub),
-      paidAmount: isCredit? 0 : Number(total),
-      pendingAmount: isCredit? Number(total) : 0,
-      status, isCredit,
+      customerName,
+      paymentType: isCredit ? "credit" : "cash",
+      offlineCreatedAt: body.offlineCreatedAt ? new Date(body.offlineCreatedAt) : new Date(),
+      unit: body.unit ?? product.unit ?? "bag",
+      subUnit: body.subUnit ?? product.subUnit ?? "",
+      qtyPerUnit: Number(body.qtyPerUnit ?? product.qtyPerUnit ?? 1),
+      quantityInSub: Number(body.quantityInSub ?? 0),
+      isPartialSale: Boolean(body.isPartialSale),
+      pricePerSub: Number(body.pricePerSub ?? 0),
+      paidAmount: isCredit ? 0 : Number(total),
+      pendingAmount: isCredit ? Number(total) : 0,
+      status,
+      isCredit,
     });
 
     if (isCredit) {
@@ -224,14 +265,17 @@ export async function POST(req: NextRequest) {
           body.customerPhone || "",
           body.customerVillage || ""
         );
-        sale.set({ customerId: customerDoc._id });
-        await sale.save();
+        await Sale.updateOne({ _id: sale._id }, { $set: { customerId: customerDoc._id } });
       } catch (err) {
-        console.error("POST /api/sales Khata grouping error:", err);
+        console.error("Khata grouping error:", err);
       }
     }
 
-    await Product.findOneAndUpdate({ _id: body.productId, userId: userObjectId }, { $inc: { stock: -quantity }, $set: { lastSyncedAt: new Date() } });
+    await Product.findOneAndUpdate(
+      { _id: body.productId, userId: userObjectId },
+      { $inc: { stock: -quantity }, $set: { lastSyncedAt: new Date() } }
+    );
+
     return NextResponse.json(sale, { status: 201 });
   } catch (error) {
     console.error("POST /api/sales error:", error);
