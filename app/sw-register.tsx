@@ -1,7 +1,7 @@
 "use client";
 import { useEffect } from "react";
 
-const CURRENT_CACHE = "al-farooq-v5";
+const CURRENT_CACHE = "al-farooq-v6"; // bump v5 -> v6 to force update
 
 export default function SWRegister() {
   useEffect(() => {
@@ -13,73 +13,59 @@ export default function SWRegister() {
         await Promise.all(
           keys
             .filter((k) => k !== CURRENT_CACHE)
-            .filter((k) => k.includes("agri-pwa") || k.includes("sona-shop-") || k.includes("al-farooq"))
-            .map((k) => {
-              console.log("Deleting old cache:", k);
-              return caches.delete(k);
-            })
+            .filter((k) => k.startsWith("al-farooq-") || k.includes("sona-shop") || k.includes("agri-pwa"))
+            .map((k) => caches.delete(k))
         );
       } catch {}
     };
+
+    const unregisterAll = async () => {
+      try {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(regs.map((r) => r.unregister()));
+        const keys = await caches.keys();
+        await Promise.all(keys.map((k) => caches.delete(k)));
+      } catch {}
+    };
+
     void cleanOldCaches();
 
     const onLoad = () => {
       navigator.serviceWorker
-        .register("/sw.js", { scope: "/" })
+        .register("/sw.js?v=6", { scope: "/" })
         .then((reg) => {
-          console.log("SW Al-Farooq v5 registered:", reg.scope);
-
-          let refreshing = false;
-          const handleControllerChange = () => {
-            if (!refreshing) {
-              refreshing = true;
-              window.location.reload();
-            }
-          };
-          navigator.serviceWorker.addEventListener("controllerchange", handleControllerChange);
+          console.log("SW Al-Farooq v6:", reg.scope);
 
           reg.addEventListener("updatefound", () => {
-            const newWorker = reg.installing;
-            if (!newWorker) return;
-            newWorker.addEventListener("statechange", () => {
-              if (newWorker.state === "installed" && navigator.serviceWorker.controller) {
-                console.log("New Al-Farooq SW ready");
-              }
-              // If new SW failed to install due to precache error, clean up
-              if (newWorker.state === "redundant") {
-                console.warn("New SW failed, cleaning old caches");
-                void cleanOldCaches();
+            const nw = reg.installing;
+            if (!nw) return;
+            nw.addEventListener("statechange", () => {
+              if (nw.state === "installed" && navigator.serviceWorker.controller) {
+                console.log("New SW ready - reloading");
+                window.location.reload();
               }
             });
           });
 
-          // Check for update every 1 hour + on focus
-          const checkUpdate = () => reg.update().catch(() => {});
-          const intervalId = window.setInterval(checkUpdate, 60 * 60 * 1000);
-          window.addEventListener("focus", checkUpdate);
-
+          // Force update check on focus
+          const check = () => reg.update().catch(() => {});
+          window.addEventListener("focus", check);
+          const id = window.setInterval(check, 60 * 60 * 1000);
           return () => {
-            window.clearInterval(intervalId);
-            window.removeEventListener("focus", checkUpdate);
-            navigator.serviceWorker.removeEventListener("controllerchange", handleControllerChange);
+            window.clearInterval(id);
+            window.removeEventListener("focus", check);
           };
         })
         .catch(async (err) => {
-          console.error("SW register failed:", err);
-          // This is your screenshot error: addAll failed -> unregister + clear cache
-          try {
-            const regs = await navigator.serviceWorker.getRegistrations();
-            await Promise.all(regs.map((r) => r.unregister()));
-            const keys = await caches.keys();
-            await Promise.all(keys.filter((k) => k.includes("al-farooq")).map((k) => caches.delete(k)));
-            console.log("Cleared broken Al-Farooq SW, reload to retry");
-          } catch {}
+          console.error("SW register failed, clearing broken SW:", err);
+          await unregisterAll();
+          // reload after 1 sec to try fresh
+          setTimeout(() => window.location.reload(), 1000);
         });
     };
 
-    if (document.readyState === "complete") {
-      onLoad();
-    } else {
+    if (document.readyState === "complete") onLoad();
+    else {
       window.addEventListener("load", onLoad);
       return () => window.removeEventListener("load", onLoad);
     }
